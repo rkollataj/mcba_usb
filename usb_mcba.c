@@ -266,5 +266,4 @@ static struct usb_driver usb_mc_driver = {
 module_usb_driver(usb_mc_driver);
 
 MODULE_AUTHOR("Remigiusz Kołłątaj <remigiusz.kollataj@mobica.com>");
-MODULE_DESCRIPTION("CAN driver for Microchip CAN BUS Analyzer");
 MODULE_LICENSE("GPL v2");
