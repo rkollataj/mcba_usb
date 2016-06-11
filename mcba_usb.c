@@ -15,27 +15,27 @@
 #define RX_BUFFER_SIZE        64
 
 /* vendor and product id */
-#define USB_MC_NAME           "usb_microchip_canbus"
-#define USB_MC_VENDOR_ID      0x04d8
-#define USB_MC_PRODUCT_ID     0x0a30
+#define MODULE_NAME          "mcba_usb"
+#define MCBA_VENDOR_ID      0x04d8
+#define MCBA_PRODUCT_ID     0x0a30
 
 /* table of devices that work with this driver */
-static const struct usb_device_id usb_mc_table[] = {
-    { USB_DEVICE(USB_MC_VENDOR_ID, USB_MC_PRODUCT_ID) },
+static const struct usb_device_id mcba_usb_table[] = {
+    { USB_DEVICE(MCBA_VENDOR_ID, MCBA_PRODUCT_ID) },
     { }                 /* Terminating entry */
 };
 
-MODULE_DEVICE_TABLE(usb, usb_mc_table);
+MODULE_DEVICE_TABLE(usb, mcba_usb_table);
 
-struct usb_mc_tx_urb_context {
-    struct usb_mc_priv *priv;
+struct mcba_urb_ctx {
+    struct mcba_priv *priv;
 
     u32 echo_index;
     u8 dlc;
 };
 
 /* Structure to hold all of our device specific stuff */
-struct usb_mc_priv {
+struct mcba_priv {
     struct can_priv can; /* must be the first member */
     struct sk_buff *echo_skb[MAX_TX_URBS];
 
@@ -44,7 +44,7 @@ struct usb_mc_priv {
 
     atomic_t active_tx_urbs;
     struct usb_anchor tx_submitted;
-    struct usb_mc_tx_urb_context tx_contexts[MAX_TX_URBS];
+    struct mcba_urb_ctx tx_contexts[MAX_TX_URBS];
 
     struct usb_anchor rx_submitted;
 
@@ -52,11 +52,11 @@ struct usb_mc_priv {
 
     u8 *cmd_msg_buffer;
 
-    struct mutex usb_mc_cmd_lock;
+    struct mutex write_lock;
 };
 
 /* command frame */
-struct __packed usb_mc_cmd_msg {
+struct __packed mcba_usb_cmd {
     u8 begin;
     u8 channel; /* unkown - always 0 */
     u8 command; /* command to execute */
@@ -67,7 +67,7 @@ struct __packed usb_mc_cmd_msg {
 };
 
 /* Start USB device */
-static int usb_mc_start(struct usb_mc_priv *priv)
+static int mcba_usb_start(struct mcba_priv *priv)
 {
 
     return 0;
@@ -75,9 +75,9 @@ static int usb_mc_start(struct usb_mc_priv *priv)
 
 
 /* Open USB device */
-static int usb_mc_open(struct net_device *netdev)
+static int mcba_usb_open(struct net_device *netdev)
 {
-    struct usb_mc_priv *priv = netdev_priv(netdev);
+    struct mcba_priv *priv = netdev_priv(netdev);
     int err;
 
     /* common open */
@@ -88,7 +88,7 @@ static int usb_mc_open(struct net_device *netdev)
     can_led_event(netdev, CAN_LED_EVENT_OPEN);
 
     /* finally start device */
-    err = usb_mc_start(priv);
+    err = mcba_usb_start(priv);
     if (err) {
         if (err == -ENODEV)
             netif_device_detach(priv->netdev);
@@ -106,7 +106,7 @@ static int usb_mc_open(struct net_device *netdev)
     return 0;
 }
 
-static void unlink_all_urbs(struct usb_mc_priv *priv)
+static void mcba_urb_unlink(struct mcba_priv *priv)
 {
     int i;
 
@@ -120,9 +120,9 @@ static void unlink_all_urbs(struct usb_mc_priv *priv)
 }
 
 /* Close USB device */
-static int usb_mc_close(struct net_device *netdev)
+static int mcba_usb_close(struct net_device *netdev)
 {
-    struct usb_mc_priv *priv = netdev_priv(netdev);
+    struct mcba_priv *priv = netdev_priv(netdev);
     int err = 0;
 
     /* Send CLOSE command to CAN controller */
@@ -135,7 +135,7 @@ static int usb_mc_close(struct net_device *netdev)
     netif_stop_queue(netdev);
 
     /* Stop polling */
-    unlink_all_urbs(priv);
+    mcba_urb_unlink(priv);
 
     close_candev(netdev);
 
@@ -144,25 +144,25 @@ static int usb_mc_close(struct net_device *netdev)
     return err;
 }
 
-static const struct net_device_ops usb_mc_netdev_ops = {
-    .ndo_open = usb_mc_open,
-    .ndo_stop = usb_mc_close,
+static const struct net_device_ops mcba_netdev_ops = {
+    .ndo_open = mcba_usb_open,
+    .ndo_stop = mcba_usb_close,
 //    .ndo_start_xmit = usb_8dev_start_xmit,
 //    .ndo_change_mtu = can_change_mtu,
 };
 
-static int usb_mc_probe(struct usb_interface *intf, const struct usb_device_id *id)
+static int mcba_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
     struct net_device *netdev;
-    struct usb_mc_priv *priv;
+    struct mcba_priv *priv;
     int i, err = 0;//-ENOMEM;
 //    u32 version;
 //    char buf[18];
     struct usb_device *usbdev = interface_to_usbdev(intf);
 
-    dev_info(&intf->dev, "%s: Microchip CAN BUS analizer connected\n", USB_MC_NAME);
+    dev_info(&intf->dev, "%s: Microchip CAN BUS analizer connected\n", MODULE_NAME);
 
-    netdev = alloc_candev(sizeof(struct usb_mc_priv), MAX_TX_URBS);
+    netdev = alloc_candev(sizeof(struct mcba_priv), MAX_TX_URBS);
     if (!netdev) {
         dev_err(&intf->dev, "Couldn't alloc candev\n");
         return -ENOMEM;
@@ -182,7 +182,7 @@ static int usb_mc_probe(struct usb_interface *intf, const struct usb_device_id *
 //                      CAN_CTRLMODE_LISTENONLY |
 //                      CAN_CTRLMODE_ONE_SHOT;
 //
-    netdev->netdev_ops = &usb_mc_netdev_ops;
+    netdev->netdev_ops = &mcba_netdev_ops;
 
     netdev->flags |= IFF_ECHO; /* we support local echo */
 
@@ -194,7 +194,7 @@ static int usb_mc_probe(struct usb_interface *intf, const struct usb_device_id *
     for (i = 0; i < MAX_TX_URBS; i++)
         priv->tx_contexts[i].echo_index = MAX_TX_URBS;
 
-    priv->cmd_msg_buffer = kzalloc(sizeof(struct usb_mc_cmd_msg),
+    priv->cmd_msg_buffer = kzalloc(sizeof(struct mcba_usb_cmd),
                       GFP_KERNEL);
     if (!priv->cmd_msg_buffer)
         goto cleanup_candev;
@@ -203,7 +203,7 @@ static int usb_mc_probe(struct usb_interface *intf, const struct usb_device_id *
 
     SET_NETDEV_DEV(netdev, &intf->dev);
 
-    mutex_init(&priv->usb_mc_cmd_lock);
+    mutex_init(&priv->write_lock);
 
     err = register_candev(netdev);
     if (err) {
@@ -240,9 +240,9 @@ cleanup_candev:
 }
 
 /* Called by the usb core when driver is unloaded or device is removed */
-static void usb_mc_disconnect(struct usb_interface *intf)
+static void mcba_usb_disconnect(struct usb_interface *intf)
 {
-    struct usb_mc_priv *priv = usb_get_intfdata(intf);
+    struct mcba_priv *priv = usb_get_intfdata(intf);
 
     usb_set_intfdata(intf, NULL);
 
@@ -252,18 +252,18 @@ static void usb_mc_disconnect(struct usb_interface *intf)
         unregister_netdev(priv->netdev);
         free_candev(priv->netdev);
 
-        unlink_all_urbs(priv);
+        mcba_urb_unlink(priv);
     }
 }
 
-static struct usb_driver usb_mc_driver = {
-	.name =		    USB_MC_NAME,
-	.probe =	    usb_mc_probe,
-	.disconnect =	usb_mc_disconnect,
-	.id_table =	    usb_mc_table,
+static struct usb_driver mcba_usb_driver = {
+        .name =		MODULE_NAME,
+        .probe =	mcba_usb_probe,
+        .disconnect =	mcba_usb_disconnect,
+        .id_table =	mcba_usb_table,
 };
 
-module_usb_driver(usb_mc_driver);
+module_usb_driver(mcba_usb_driver);
 
 MODULE_AUTHOR("Remigiusz Kołłątaj <remigiusz.kollataj@mobica.com>");
 MODULE_LICENSE("GPL v2");

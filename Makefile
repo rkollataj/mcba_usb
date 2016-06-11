@@ -1,4 +1,4 @@
-obj-m+=usb_mcba.o
+obj-m+=mcba_usb.o
  
 all:
 	make -C /lib/modules/$(shell uname -r)/build/ M=$(PWD) modules
