@@ -10,17 +10,71 @@
 #include <linux/can/led.h>
 
 /* driver constants */
-#define MAX_RX_URBS           20
-#define MAX_TX_URBS           20
-#define RX_BUFFER_SIZE        64
+#define MAX_RX_URBS         20
+#define MAX_TX_URBS         20
+#define RX_BUFFER_SIZE      64
 
-#define MCBA_USB_EP_IN   1
-#define MCBA_USB_EP_OUT  1
+#define MCBA_USB_EP_IN      1
+#define MCBA_USB_EP_OUT     1
 
 /* vendor and product id */
 #define MODULE_NAME          "mcba_usb"
 #define MCBA_VENDOR_ID      0x04d8
 #define MCBA_PRODUCT_ID     0x0a30
+
+/* Not required by driver itself as CANBUS is USB based */
+/* It seems to be requried by CANBUS                    */
+#define MCBA_CAN_CLOCK      40000000
+
+/* Microchip command id */
+////////////////////////////////
+//Send to USB
+#define MBCA_CMD_CHANGE_BIT_RATE_RSP            0xE1
+#define MBCA_CMD_TRANSMIT_MESSAGE_RSP           0xE2
+#define MBCA_CMD_RECEIVE_MESSAGE                0xE3
+#define MBCA_CMD_TRIGGER_EVENT                  0xE4
+#define MBCA_CMD_SETUP_TRIGGER_RSP              0xE5
+#define MBCA_CMD_ERROR_COUNT_STATUS             0xE6
+#define MBCA_CMD_READ_REGISTER_DIRECTLY_RSP     0xE7
+#define MBCA_CMD_READ_FW_VERSION_RSP            0xE8
+#define MBCA_CMD_DEBUG_MODE_RSP                 0xF0
+#define MBCA_CMD_I_AM_ALIVE_FROM_CAN            0xF5
+#define MBCA_CMD_I_AM_ALIVE_FROM_USB            0xF7
+
+//Recieve from USB USB host, send down to CAN micro
+#define MBCA_CMD_CHANGE_BIT_RATE                0xA1
+#define MBCA_CMD_TRANSMIT_MESSAGE_PD            0xA2
+#define MBCA_CMD_TRANSMIT_MESSAGE_EV            0xA3
+#define MBCA_CMD_SETUP_TRIGGER                  0xA4
+#define MBCA_CMD_WRITE_REGISTER_DIRECTLY        0xA5
+#define MBCA_CMD_READ_REGISTER_DIRECTLY         0xA6
+#define MBCA_CMD_TOGGLE_LED                     0xA7
+#define MBCA_CMD_SETUP_TERMINATION_RESISTANCE   0xA8
+#define MBCA_CMD_READ_FW_VERSION                0xA9
+#define MBCA_CMD_CAN_RESET                      0xAA
+#define MBCA_CMD_CHANGE_CAN_MODE                0xAB
+#define MBCA_CMD_SETUP_HW_FILTER                0xAC
+#define MBCA_CMD_DEBUG_MODE                     0xB0
+
+/* supported bitrates */
+#define MCBA_BITRATE_20_KBPS_40MHZ      19940
+#define MCBA_BITRATE_33_3KBPS_40MHZ     33333
+#define MCBA_BITRATE_50KBPS_40MHZ       50000
+#define MCBA_BITRATE_80KBPS_40MHZ       80000
+#define MCBA_BITRATE_83_3KBPS_40MHZ     83333
+#define MCBA_BITRATE_100KBPS_40MHZ      100000
+#define MCBA_BITRATE_125KBPS_40MHZ      125000
+#define MCBA_BITRATE_150KBPS_40MHZ      150375
+#define MCBA_BITRATE_175KBPS_40MHZ      175438
+#define MCBA_BITRATE_200KBPS_40MHZ      200000
+#define MCBA_BITRATE_225KBPS_40MHZ      227272
+#define MCBA_BITRATE_250KBPS_40MHZ      250000
+#define MCBA_BITRATE_275KBPS_40MHZ      277777
+#define MCBA_BITRATE_300KBPS_40MHZ      303030
+#define MCBA_BITRATE_500KBPS_40MHZ      500000
+#define MCBA_BITRATE_625KBPS_40MHZ      625000
+#define MCBA_BITRATE_800KBPS_40MHZ      800000
+#define MCBA_BITRATE_1000KBPS_40MHZ     1000000
 
 /* table of devices that work with this driver */
 static const struct usb_device_id mcba_usb_table[] = {
@@ -40,7 +94,7 @@ struct mcba_urb_ctx {
 /* Structure to hold all of our device specific stuff */
 struct mcba_priv {
     struct can_priv can; /* must be the first member */
-    struct sk_buff *echo_skb[MAX_TX_URBS];
+//    struct sk_buff *echo_skb[MAX_TX_URBS];
 
     struct usb_device *udev;
     struct net_device *netdev;
@@ -56,6 +110,12 @@ struct mcba_priv {
     u8 *cmd_msg_buffer;
 
     struct mutex write_lock;
+
+    u8 pic_usb_sw_ver_major;
+    u8 pic_usb_sw_ver_minor;
+    u8 pic_can_sw_ver_major;
+    u8 pic_can_sw_ver_minor;
+    u8 termination_state;
 };
 
 /* command frame */
@@ -74,25 +134,92 @@ struct __packed mcba_usb_msg_can {
 /* command frame */
 struct __packed mcba_usb_msg {
     u8 cmdId;
-    u8 data[18];
+    u8 unused[18];
 };
 
-/* TODO: align bit timing */
+struct __packed mcba_usb_msg_keep_alive_usb {
+    u8 cmd_id;
+    u8 termination_state;
+    u8 soft_ver_major;
+    u8 soft_ver_minor;
+    u8 unused[15];
+};
+
+struct __packed mcba_usb_msg_keep_alive_can {
+    u8 cmd_id;
+    u8 tx_err_cnt;
+    u8 rx_err_cnt;
+    u8 rx_buff_ovfl;
+    u8 tx_bus_off;
+    u8 can_bitrate_hi;
+    u8 can_bitrate_lo;
+    u8 rx_lost_lo;
+    u8 rx_lost_hi;
+    u8 can_stat;
+    u8 soft_ver_major;
+    u8 soft_ver_minor;
+    u8 debug_mode;
+    u8 test_complete;
+    u8 test_result;
+    u8 unused[4];
+};
+
+
+/* Required by can-dev however not for the sake of driver as CANBUS is USB based */
 static const struct can_bittiming_const mcba_bittiming_const = {
-        .name = "usb_8dev",
+        .name = "mcba_usb",
         .tseg1_min = 1,
-        .tseg1_max = 16,
+        .tseg1_max = 8,
         .tseg2_min = 1,
         .tseg2_max = 8,
         .sjw_max = 4,
-        .brp_min = 1,
-        .brp_max = 1024,
-        .brp_inc = 1,
+        .brp_min = 2,
+        .brp_max = 128,
+        .brp_inc = 2,
 };
+
+static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv, struct mcba_usb_msg_keep_alive_usb *msg)
+{
+    printk("Termination %hhu, ver_maj %hhu, soft_min %hhu\n", msg->termination_state, msg->soft_ver_major, msg->soft_ver_minor);
+
+    priv->pic_usb_sw_ver_major = msg->soft_ver_major;
+    priv->pic_usb_sw_ver_minor = msg->soft_ver_minor;
+    priv->termination_state = msg->termination_state;
+}
+
+static void mcba_usb_process_keep_alive_can(struct mcba_priv *priv, struct mcba_usb_msg_keep_alive_can *msg)
+{
+//    printk("tx_err_cnt %hhu, rx_err_cnt %hhu, rx_buff_ovfl %hhu, tx_bus_off %hhu, "
+//            "can_bitrate %hu, rx_lost %hu, can_stat %hhu, soft_ver %hhu.%hhu, "
+//            "debug_mode %hhu, test_complete %hhu, test_result %hhu\n",
+//           msg->tx_err_cnt, msg->rx_err_cnt, msg->rx_buff_ovfl, msg->tx_bus_off,
+//           ((msg->can_bitrate_hi << 8) + msg->can_bitrate_lo), ((msg->rx_lost_hi >> 8) + msg->rx_lost_lo),
+//           msg->can_stat, msg->soft_ver_major, msg->soft_ver_minor,
+//           msg->debug_mode, msg->test_complete, msg->test_result);
+
+    priv->bec.txerr = msg->tx_err_cnt;
+    priv->bec.rxerr = msg->rx_err_cnt;
+
+    priv->pic_can_sw_ver_major = msg->soft_ver_major;
+    priv->pic_can_sw_ver_minor = msg->soft_ver_minor;
+}
 
 static void mcba_usb_process_rx(struct mcba_priv *priv, struct mcba_usb_msg *msg)
 {
+    switch(msg->cmdId)
+    {
+    case MBCA_CMD_I_AM_ALIVE_FROM_CAN:
+        mcba_usb_process_keep_alive_can(priv, (struct mcba_usb_msg_keep_alive_can *)msg);
+        break;
 
+    case MBCA_CMD_I_AM_ALIVE_FROM_USB:
+        mcba_usb_process_keep_alive_usb(priv, (struct mcba_usb_msg_keep_alive_usb *)msg);
+        break;
+
+    default:
+        // Unsupported message
+        break;
+    }
 }
 
 
@@ -236,6 +363,8 @@ static int mcba_usb_open(struct net_device *netdev)
     struct mcba_priv *priv = netdev_priv(netdev);
     int err;
 
+    printk("%s\n", __FUNCTION__);
+
     /* common open */
     err = open_candev(netdev);
     if (err)
@@ -281,6 +410,8 @@ static int mcba_usb_close(struct net_device *netdev)
     struct mcba_priv *priv = netdev_priv(netdev);
     int err = 0;
 
+    printk("%s\n", __FUNCTION__);
+
     /* Send CLOSE command to CAN controller */
 //    err = usb_8dev_cmd_close(priv);
 //    if (err)
@@ -310,6 +441,8 @@ static int mcba_net_set_mode(struct net_device *netdev, enum can_mode mode)
 //        struct mcba_priv *priv = netdev_priv(netdev);
         int err = 0;
 
+        printk("%s\n", __FUNCTION__);
+
         switch (mode) {
         case CAN_MODE_START:
 //                err = usb_8dev_cmd_open(priv);
@@ -327,12 +460,12 @@ static int mcba_net_set_mode(struct net_device *netdev, enum can_mode mode)
 static int mcba_net_get_berr_counter(const struct net_device *netdev,
                                      struct can_berr_counter *bec)
 {
-//	struct usb_8dev_priv *priv = netdev_priv(netdev);
+    struct mcba_priv *priv = netdev_priv(netdev);
 
-//	bec->txerr = priv->bec.txerr;
-//	bec->rxerr = priv->bec.rxerr;
+    bec->txerr = priv->bec.txerr;
+    bec->rxerr = priv->bec.rxerr;
 
-        return 0;
+    return 0;
 }
 
 static const struct net_device_ops mcba_netdev_ops = {
@@ -341,6 +474,132 @@ static const struct net_device_ops mcba_netdev_ops = {
 //    .ndo_start_xmit = usb_8dev_start_xmit,
 //    .ndo_change_mtu = can_change_mtu,
 };
+
+static void mcba_net_calc_bittiming(u32 sjw, u32 prop, u32 seg1, u32 seg2, u32 brp, struct can_bittiming *bt)
+{
+    bt->sjw = sjw;
+    bt->prop_seg = prop;
+    bt->phase_seg1 = seg1;
+    bt->phase_seg2 = seg2;
+    bt->brp = brp;
+    /* nanoseconds expected */
+    bt->tq = (bt->brp * 1000)/(MCBA_CAN_CLOCK/1000000);
+    bt->bitrate = 1000000000/((bt->sjw + bt->prop_seg + bt->phase_seg1 + bt->phase_seg2)*bt->tq);
+    bt->sample_point = ((bt->sjw + bt->prop_seg + bt->phase_seg1)*1000)/(bt->sjw + bt->prop_seg + bt->phase_seg1 + bt->phase_seg2);
+}
+
+/* Microchip CANBUS has hardcoded bittiming values by default. This fucntion sends
+ * request via USB to change the speed and align bittiming values for presentation purposes only
+ */
+static int mcba_net_set_bittiming(struct net_device *netdev)
+{
+    struct mcba_priv *priv = netdev_priv(netdev);
+    struct can_bittiming *bt = &priv->can.bittiming;
+
+    switch(bt->bitrate)
+    {
+    case MCBA_BITRATE_20_KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 5, 8, 6, 100, bt);
+        break;
+
+    case MCBA_BITRATE_33_3KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 8, 48, bt);
+        break;
+
+    case MCBA_BITRATE_50KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 7, 4, 40, bt);
+        break;
+
+    case MCBA_BITRATE_80KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 8, 20, bt);
+        break;
+
+    case MCBA_BITRATE_83_3KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 7, 20, bt);
+        break;
+
+    case MCBA_BITRATE_100KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 1, 5, 3, 40, bt);
+        break;
+
+    case MCBA_BITRATE_125KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 3, 8, 8, 16, bt);
+        break;
+
+    case MCBA_BITRATE_150KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 6, 4, 14, bt);
+        break;
+
+    case MCBA_BITRATE_175KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 6, 4, 12, bt);
+        break;
+
+    case MCBA_BITRATE_200KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 8, 8, bt);
+        break;
+
+    case MCBA_BITRATE_225KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 5, 8, bt);
+        break;
+
+    case MCBA_BITRATE_250KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 3, 8, 8, 8, bt);
+        break;
+
+    case MCBA_BITRATE_275KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 7, 6, bt);
+        break;
+
+    case MCBA_BITRATE_300KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 5, 6, bt);
+        break;
+
+    case MCBA_BITRATE_500KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 3, 8, 8, 4, bt);
+        break;
+
+    case MCBA_BITRATE_625KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 1, 4, 2, 8, bt);
+        break;
+
+    case MCBA_BITRATE_800KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 8, 8, 8, 2, bt);
+        break;
+
+    case MCBA_BITRATE_1000KBPS_40MHZ:
+        /* bittiming aligned with default Microchip CANBUS firmware */
+        mcba_net_calc_bittiming(1, 3, 8, 8, 2, bt);
+        break;
+
+    default:
+        netdev_err(netdev, "Unsupported bittrate (%u). Use one of: 20000, "
+                   "33333, 50000, 80000, 83333, 100000, 125000, 150000, "
+                   "175000, 200000, 225000, 250000, 275000, 300000, 500000, "
+                   "625000, 800000, 1000000\n", bt->bitrate);
+
+        return -EINVAL;
+
+    }
+
+    return 0;
+}
 
 static int mcba_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
@@ -365,10 +624,11 @@ static int mcba_usb_probe(struct usb_interface *intf, const struct usb_device_id
     priv->netdev = netdev;
 
     priv->can.state = CAN_STATE_STOPPED;
-    priv->can.clock.freq = 40000000;
+    priv->can.clock.freq = MCBA_CAN_CLOCK;
     priv->can.bittiming_const = &mcba_bittiming_const;
     priv->can.do_set_mode = mcba_net_set_mode;
     priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
+    priv->can.do_set_bittiming = mcba_net_set_bittiming;
     priv->can.ctrlmode_supported = CAN_CTRLMODE_LOOPBACK |
                       CAN_CTRLMODE_LISTENONLY |
                       CAN_CTRLMODE_ONE_SHOT;
