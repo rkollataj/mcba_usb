@@ -184,6 +184,28 @@ static const struct can_bittiming_const mcba_bittiming_const = {
         .brp_inc = 2,
 };
 
+static ssize_t termination_show(struct device *dev, struct device_attribute *attr,
+                      char *buf)
+{
+        return sprintf(buf, "%d\n", 66);
+}
+
+static ssize_t termination_store(struct device *dev, struct device_attribute *attr,
+                      const char *buf, size_t count)
+{
+//        sscanf(buf, "%du", &foo);
+        return count;
+}
+
+
+static struct device_attribute termination_attr = {
+    .attr = {
+        .name = "termination",
+        .mode = 0666 },
+    .show	= termination_show,
+    .store	= termination_store
+};
+
 static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv, struct mcba_usb_msg_keep_alive_usb *msg)
 {
 //    printk("Termination %hhu, ver_maj %hhu, soft_min %hhu\n", msg->termination_state, msg->soft_ver_major, msg->soft_ver_minor);
@@ -838,23 +860,11 @@ static int mcba_usb_probe(struct usb_interface *intf, const struct usb_device_id
         goto cleanup_cmd_msg_buffer;
     }
 
-//    err = usb_8dev_cmd_version(priv, &version);
-//    if (err) {
-//        netdev_err(netdev, "can't get firmware version\n");
-//        goto cleanup_unregister_candev;
-//    } else {
-//        netdev_info(netdev,
-//             "firmware: %d.%d, hardware: %d.%d\n",
-//             (version>>24) & 0xff, (version>>16) & 0xff,
-//             (version>>8) & 0xff, version & 0xff);
-//    }
-
-    devm_can_led_init(netdev);
+    err = device_create_file(&netdev->dev, &termination_attr);
+    if (err)
+        goto cleanup_cmd_msg_buffer;
 
     return 0;
-
-//cleanup_unregister_candev:
-//    unregister_netdev(priv->netdev);
 
 cleanup_cmd_msg_buffer:
     kfree(priv->cmd_msg_buffer);
@@ -880,6 +890,8 @@ static void mcba_usb_disconnect(struct usb_interface *intf)
 
         mcba_urb_unlink(priv);
     }
+
+    device_remove_file(&priv->netdev->dev, &termination_attr);
 }
 
 static struct usb_driver mcba_usb_driver = {
