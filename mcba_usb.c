@@ -12,7 +12,7 @@
 /* driver constants */
 #define MAX_RX_URBS         20
 #define MAX_TX_URBS         20
-#define RX_BUFFER_SIZE      64
+#define USB_BUFF_SIZE       19
 
 #define MCBA_USB_EP_IN      1
 #define MCBA_USB_EP_OUT     1
@@ -164,6 +164,12 @@ struct __packed mcba_usb_msg_keep_alive_can {
     u8 unused[4];
 };
 
+struct __packed mcba_usb_msg_change_bitrate {
+    u8 cmd_id;
+    u8 bitrate_hi;
+    u8 bitrate_lo;
+    u8 unused[16];
+};
 
 /* Required by can-dev however not for the sake of driver as CANBUS is USB based */
 static const struct can_bittiming_const mcba_bittiming_const = {
@@ -180,7 +186,7 @@ static const struct can_bittiming_const mcba_bittiming_const = {
 
 static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv, struct mcba_usb_msg_keep_alive_usb *msg)
 {
-    printk("Termination %hhu, ver_maj %hhu, soft_min %hhu\n", msg->termination_state, msg->soft_ver_major, msg->soft_ver_minor);
+//    printk("Termination %hhu, ver_maj %hhu, soft_min %hhu\n", msg->termination_state, msg->soft_ver_major, msg->soft_ver_minor);
 
     priv->pic_usb_sw_ver_major = msg->soft_ver_major;
     priv->pic_usb_sw_ver_minor = msg->soft_ver_minor;
@@ -217,6 +223,7 @@ static void mcba_usb_process_rx(struct mcba_priv *priv, struct mcba_usb_msg *msg
         break;
 
     default:
+        netdev_warn(priv->netdev, "Unsupported msg (0x%hhX)", msg->cmdId);
         // Unsupported message
         break;
     }
@@ -270,7 +277,7 @@ static void mcba_usb_read_bulk_callback(struct urb *urb)
 resubmit_urb:
         usb_fill_bulk_urb(urb, priv->udev,
                           usb_rcvbulkpipe(priv->udev, MCBA_USB_EP_OUT),
-                          urb->transfer_buffer, RX_BUFFER_SIZE,
+                          urb->transfer_buffer, USB_BUFF_SIZE,
                           mcba_usb_read_bulk_callback, priv);
 
         retval = usb_submit_urb(urb, GFP_ATOMIC);
@@ -300,7 +307,7 @@ static int mcba_usb_start(struct mcba_priv *priv)
                     break;
             }
 
-            buf = usb_alloc_coherent(priv->udev, RX_BUFFER_SIZE, GFP_KERNEL,
+            buf = usb_alloc_coherent(priv->udev, USB_BUFF_SIZE, GFP_KERNEL,
                                      &urb->transfer_dma);
             if (!buf) {
                     netdev_err(netdev, "No memory left for USB buffer\n");
@@ -312,7 +319,7 @@ static int mcba_usb_start(struct mcba_priv *priv)
             usb_fill_bulk_urb(urb, priv->udev,
                               usb_rcvbulkpipe(priv->udev,
                                               MCBA_USB_EP_IN),
-                              buf, RX_BUFFER_SIZE,
+                              buf, USB_BUFF_SIZE,
                               mcba_usb_read_bulk_callback, priv);
             urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
             usb_anchor_urb(urb, &priv->rx_submitted);
@@ -320,7 +327,7 @@ static int mcba_usb_start(struct mcba_priv *priv)
             err = usb_submit_urb(urb, GFP_KERNEL);
             if (err) {
                     usb_unanchor_urb(urb);
-                    usb_free_coherent(priv->udev, RX_BUFFER_SIZE, buf,
+                    usb_free_coherent(priv->udev, USB_BUFF_SIZE, buf,
                                       urb->transfer_dma);
                     usb_free_urb(urb);
                     break;
@@ -355,6 +362,157 @@ failed:
     netdev_warn(netdev, "couldn't submit control: %d\n", err);
 
     return err;
+}
+
+static void mcba_usb_write_bulk_callback(struct urb *urb)
+{
+    struct mcba_priv *priv = urb->context;
+    struct net_device *netdev;
+
+    BUG_ON(!priv);
+
+    netdev = priv->netdev;
+
+    /* free up our allocated buffer */
+    usb_free_coherent(urb->dev, urb->transfer_buffer_length,
+              urb->transfer_buffer, urb->transfer_dma);
+
+    atomic_dec(&priv->active_tx_urbs);
+
+
+
+//    if (!netif_device_present(netdev))
+//        return;
+
+    if (urb->status)
+        netdev_info(netdev, "Tx URB aborted (%d)\n",
+             urb->status);
+
+//    netdev->stats.tx_packets++;
+//    netdev->stats.tx_bytes += context->dlc;
+
+//    can_get_echo_skb(netdev, context->echo_index);
+
+//    can_led_event(netdev, CAN_LED_EVENT_TX);
+
+//    /* Release context */
+//    context->echo_index = MAX_TX_URBS;
+
+//    netif_wake_queue(netdev);
+}
+
+/* Send data to device */
+static void mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg)
+{
+//	struct net_device_stats *stats = &netdev->stats;
+//	struct can_frame *cf = (struct can_frame *) skb->data;
+//	struct usb_8dev_tx_msg *msg;
+    struct urb *urb;
+//	struct usb_8dev_tx_urb_context *context = NULL;
+    u8 *buf;
+    int i, err;
+//	size_t size = sizeof(struct usb_8dev_tx_msg);
+
+    /* create a URB, and a buffer for it, and copy the data to the URB */
+    urb = usb_alloc_urb(0, GFP_ATOMIC);
+    if (!urb) {
+        netdev_err(priv->netdev, "No memory left for URBs\n");
+        goto nomem;
+    }
+
+    buf = usb_alloc_coherent(priv->udev, USB_BUFF_SIZE, GFP_ATOMIC,
+                 &urb->transfer_dma);
+    if (!buf) {
+        netdev_err(priv->netdev, "No memory left for USB buffer\n");
+        goto nomembuf;
+    }
+
+    memcpy(buf, usb_msg, USB_BUFF_SIZE);
+
+//    for (i = 0; i < MAX_TX_URBS; i++) {
+//        if (priv->tx_contexts[i].echo_index == MAX_TX_URBS) {
+//            context = &priv->tx_contexts[i];
+//            break;
+//        }
+//    }
+
+    /* May never happen! When this happens we'd more URBs in flight as
+     * allowed (MAX_TX_URBS).
+     */
+//    if (!context)
+//        goto nofreecontext;
+
+//    context->priv = priv;
+//    context->echo_index = i;
+//    context->dlc = cf->can_dlc;
+
+    usb_fill_bulk_urb(urb, priv->udev,
+              usb_sndbulkpipe(priv->udev, MCBA_USB_EP_OUT),
+              buf, USB_BUFF_SIZE, mcba_usb_write_bulk_callback, priv);
+    urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+    usb_anchor_urb(urb, &priv->tx_submitted);
+
+//    can_put_echo_skb(skb, netdev, context->echo_index);
+
+    atomic_inc(&priv->active_tx_urbs);
+
+    err = usb_submit_urb(urb, GFP_ATOMIC);
+    if (unlikely(err))
+        goto failed;
+//    else if (atomic_read(&priv->active_tx_urbs) >= MAX_TX_URBS)
+//        /* Slow down tx path */
+//        netif_stop_queue(netdev);
+
+    /* Release our reference to this URB, the USB core will eventually free
+     * it entirely.
+     */
+    usb_free_urb(urb);
+
+//    return NETDEV_TX_OK;
+
+    return;
+
+nofreecontext:
+    usb_free_coherent(priv->udev, USB_BUFF_SIZE, buf, urb->transfer_dma);
+    usb_free_urb(urb);
+
+    netdev_warn(priv->netdev, "couldn't find free context");
+
+    return NETDEV_TX_BUSY;
+
+failed:
+//    can_free_echo_skb(netdev, context->echo_index);
+
+    usb_unanchor_urb(urb);
+    usb_free_coherent(priv->udev, USB_BUFF_SIZE, buf, urb->transfer_dma);
+
+    atomic_dec(&priv->active_tx_urbs);
+
+    if (err == -ENODEV)
+        netif_device_detach(priv->netdev);
+    else
+        netdev_warn(priv->netdev, "failed tx_urb %d\n", err);
+
+nomembuf:
+    usb_free_urb(urb);
+
+nomem:
+//    dev_kfree_skb(skb);
+//    stats->tx_dropped++;
+
+//    return NETDEV_TX_OK;
+    return;
+}
+
+static void mcba_usb_xmit_change_bitrate(struct mcba_priv *priv, u16 bitrate)
+{
+    struct mcba_usb_msg_change_bitrate usb_msg;
+
+    usb_msg.cmd_id =  MBCA_CMD_CHANGE_BIT_RATE;
+    usb_msg.bitrate_hi = (0xff00 & bitrate) >> 8;
+    usb_msg.bitrate_lo = (0xff & bitrate);
+
+    mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg);
 }
 
 /* Open USB device */
@@ -501,91 +659,109 @@ static int mcba_net_set_bittiming(struct net_device *netdev)
     case MCBA_BITRATE_20_KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 5, 8, 6, 100, bt);
+        mcba_usb_xmit_change_bitrate(priv, 20);
         break;
 
     case MCBA_BITRATE_33_3KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 8, 48, bt);
+        mcba_usb_xmit_change_bitrate(priv, 33);
         break;
 
     case MCBA_BITRATE_50KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 7, 4, 40, bt);
+        mcba_usb_xmit_change_bitrate(priv, 50);
         break;
 
     case MCBA_BITRATE_80KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 8, 20, bt);
+        mcba_usb_xmit_change_bitrate(priv, 80);
         break;
 
     case MCBA_BITRATE_83_3KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 7, 20, bt);
+        mcba_usb_xmit_change_bitrate(priv, 83);
         break;
 
     case MCBA_BITRATE_100KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 1, 5, 3, 40, bt);
+        mcba_usb_xmit_change_bitrate(priv, 100);
         break;
 
     case MCBA_BITRATE_125KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 3, 8, 8, 16, bt);
+        mcba_usb_xmit_change_bitrate(priv, 125);
         break;
 
     case MCBA_BITRATE_150KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 6, 4, 14, bt);
+        mcba_usb_xmit_change_bitrate(priv, 150);
         break;
 
     case MCBA_BITRATE_175KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 6, 4, 12, bt);
+        mcba_usb_xmit_change_bitrate(priv, 175);
         break;
 
     case MCBA_BITRATE_200KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 8, 8, bt);
+        mcba_usb_xmit_change_bitrate(priv, 200);
         break;
 
     case MCBA_BITRATE_225KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 5, 8, bt);
+        mcba_usb_xmit_change_bitrate(priv, 225);
         break;
 
     case MCBA_BITRATE_250KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 3, 8, 8, 8, bt);
+        mcba_usb_xmit_change_bitrate(priv, 250);
         break;
 
     case MCBA_BITRATE_275KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 7, 6, bt);
+        mcba_usb_xmit_change_bitrate(priv, 275);
         break;
 
     case MCBA_BITRATE_300KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 5, 6, bt);
+        mcba_usb_xmit_change_bitrate(priv, 300);
         break;
 
     case MCBA_BITRATE_500KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 3, 8, 8, 4, bt);
+        mcba_usb_xmit_change_bitrate(priv, 500);
         break;
 
     case MCBA_BITRATE_625KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 1, 4, 2, 8, bt);
+        mcba_usb_xmit_change_bitrate(priv, 625);
         break;
 
     case MCBA_BITRATE_800KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 8, 8, 8, 2, bt);
+        mcba_usb_xmit_change_bitrate(priv, 800);
         break;
 
     case MCBA_BITRATE_1000KBPS_40MHZ:
         /* bittiming aligned with default Microchip CANBUS firmware */
         mcba_net_calc_bittiming(1, 3, 8, 8, 2, bt);
+        mcba_usb_xmit_change_bitrate(priv, 1000);
         break;
 
     default:
@@ -595,7 +771,6 @@ static int mcba_net_set_bittiming(struct net_device *netdev)
                    "625000, 800000, 1000000\n", bt->bitrate);
 
         return -EINVAL;
-
     }
 
     return 0;
