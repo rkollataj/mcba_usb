@@ -23,7 +23,7 @@
 #define MCBA_PRODUCT_ID     0x0a30
 
 /* Not required by driver itself as CANBUS is USB based */
-/* It seems to be requried by CANBUS                    */
+/* Used internally by candev for bitrate calculation    */
 #define MCBA_CAN_CLOCK      40000000
 
 /* Microchip command id */
@@ -171,6 +171,12 @@ struct __packed mcba_usb_msg_change_bitrate {
     u8 unused[16];
 };
 
+struct __packed mcba_usb_msg_terminaton {
+    u8 cmdId;
+    u8 termination;
+    u8 unused[17];
+};
+
 /* Required by can-dev however not for the sake of driver as CANBUS is USB based */
 static const struct can_bittiming_const mcba_bittiming_const = {
         .name = "mcba_usb",
@@ -184,17 +190,37 @@ static const struct can_bittiming_const mcba_bittiming_const = {
         .brp_inc = 2,
 };
 
+static void mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg);
+
+
 static ssize_t termination_show(struct device *dev, struct device_attribute *attr,
                       char *buf)
 {
-        return sprintf(buf, "%d\n", 66);
+    struct net_device *netdev = to_net_dev(dev);
+    struct mcba_priv *priv = netdev_priv(netdev);
+
+    return sprintf(buf, "%hhu\n", priv->termination_state);
 }
 
 static ssize_t termination_store(struct device *dev, struct device_attribute *attr,
                       const char *buf, size_t count)
 {
-//        sscanf(buf, "%du", &foo);
-        return count;
+    struct net_device *netdev = to_net_dev(dev);
+    struct mcba_priv *priv = netdev_priv(netdev);
+    u8 prev_termination = &priv->termination_state;
+
+    sscanf(buf, "%hhu", &priv->termination_state);
+
+    if(prev_termination != priv->termination_state)
+    {
+        struct mcba_usb_msg_terminaton msg;
+        msg.cmdId = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
+        msg.termination = priv->termination_state;
+
+        mcba_usb_xmit(priv, (struct mcba_usb_msg *)&msg);
+    }
+
+    return count;
 }
 
 
@@ -208,7 +234,7 @@ static struct device_attribute termination_attr = {
 
 static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv, struct mcba_usb_msg_keep_alive_usb *msg)
 {
-//    printk("Termination %hhu, ver_maj %hhu, soft_min %hhu\n", msg->termination_state, msg->soft_ver_major, msg->soft_ver_minor);
+    printk("Termination %hhu, ver_maj %hhu, soft_min %hhu\n", msg->termination_state, msg->soft_ver_major, msg->soft_ver_minor);
 
     priv->pic_usb_sw_ver_major = msg->soft_ver_major;
     priv->pic_usb_sw_ver_minor = msg->soft_ver_minor;
@@ -880,6 +906,8 @@ static void mcba_usb_disconnect(struct usb_interface *intf)
 {
     struct mcba_priv *priv = usb_get_intfdata(intf);
 
+    device_remove_file(&priv->netdev->dev, &termination_attr);
+
     usb_set_intfdata(intf, NULL);
 
     if (priv) {
@@ -890,8 +918,6 @@ static void mcba_usb_disconnect(struct usb_interface *intf)
 
         mcba_urb_unlink(priv);
     }
-
-    device_remove_file(&priv->netdev->dev, &termination_attr);
 }
 
 static struct usb_driver mcba_usb_driver = {
