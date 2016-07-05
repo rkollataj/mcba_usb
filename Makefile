@@ -10,7 +10,7 @@ install: all
 	sudo cp mcba_usb.ko /lib/modules/$(shell uname -r)/kernel/drivers/net/can/usb
 	sudo depmod -a
 
-start: install
-	-sudo rmmod mcba_usb
-	sudo modprobe mcba_usb
+#start: install
+#	-sudo rmmod mcba_usb
+#	sudo modprobe mcba_usb
 
