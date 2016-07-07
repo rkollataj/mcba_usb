@@ -17,6 +17,7 @@
 /* driver constants */
 #define MCBA_MAX_RX_URBS         20
 #define MCBA_MAX_TX_URBS         20
+#define MCBA_CTX_FREE            MCBA_MAX_TX_URBS
 
 /* RX buffer must be bigger than msg size since at the
  * beggining USB messages are stacked.
@@ -105,17 +106,19 @@ MODULE_DEVICE_TABLE(usb, mcba_usb_table);
 
 struct mcba_urb_ctx {
     struct mcba_priv *priv;
-
-    u32 echo_index;
+    u32 ndx;
     u8 dlc;
+    bool can_frame;
 };
 
 /* Structure to hold all of our device specific stuff */
 struct mcba_priv {
     struct can_priv can; /* must be the first member */
+    struct sk_buff *echo_skb[MCBA_MAX_TX_URBS];
+    struct mcba_urb_ctx tx_context[MCBA_MAX_TX_URBS];
+
     struct usb_device *udev;
     struct net_device *netdev;
-    atomic_t active_tx_urbs;
     struct usb_anchor tx_submitted;
     struct usb_anchor rx_submitted;
     struct can_berr_counter bec;
@@ -208,9 +211,11 @@ int debug = 0;
 module_param(debug, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
 MODULE_PARM_DESC(debug, "Debug USB and/or CAN PICs");
 
-static void mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg);
+static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg, struct sk_buff *skb);
+static void mcba_usb_xmit_cmd(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg);
 static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic);
 static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination);
+static inline void mcba_init_ctx(struct mcba_priv *priv);
 
 static ssize_t termination_show(struct device *dev, struct device_attribute *attr,
                       char *buf)
@@ -444,16 +449,9 @@ static int mcba_usb_start(struct mcba_priv *priv)
 
     priv->can.state = CAN_STATE_ERROR_ACTIVE;
 
+    mcba_init_ctx(priv);
     mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_USB);
     mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_CAN);
-
-    return err;
-
-failed:
-    if (err == -ENODEV)
-            netif_device_detach(priv->netdev);
-
-    netdev_warn(netdev, "couldn't submit control: %d\n", err);
 
     return err;
 }
@@ -463,6 +461,8 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
     struct mcba_priv *priv = urb->context;
     struct net_device *netdev;
 
+    printk("mcba_usb_write_bulk_callback\n");
+
     BUG_ON(!priv);
 
     netdev = priv->netdev;
@@ -470,9 +470,6 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
     /* free up our allocated buffer */
     usb_free_coherent(urb->dev, urb->transfer_buffer_length,
               urb->transfer_buffer, urb->transfer_dma);
-
-    atomic_dec(&priv->active_tx_urbs);
-
 
 
 //    if (!netif_device_present(netdev))
@@ -495,17 +492,74 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
 //    netif_wake_queue(netdev);
 }
 
-/* Send data to device */
-static void mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg)
+
+static inline void mcba_init_ctx(struct mcba_priv *priv)
 {
-//	struct net_device_stats *stats = &netdev->stats;
-//	struct can_frame *cf = (struct can_frame *) skb->data;
-//	struct usb_8dev_tx_msg *msg;
+    int i = 0;
+
+    for (i = 0; i < MCBA_MAX_TX_URBS; i++) {
+        priv->tx_context[i].ndx = MCBA_CTX_FREE;
+    }
+}
+
+static inline struct mcba_urb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
+{
+    int i = 0;
+    struct mcba_urb_ctx *ctx = 0;
+
+    for (i = 0; i < MCBA_MAX_TX_URBS; i++) {
+        if (priv->tx_context[i].ndx == MCBA_CTX_FREE) {
+            ctx = &priv->tx_context[i];
+            ctx->ndx = i;
+            ctx->priv = priv;
+            break;
+        }
+    }
+
+    return ctx;
+}
+
+/* Send data to device */
+static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
+                      struct net_device *netdev)
+{
+    return NETDEV_TX_OK;
+}
+
+/* Send data to device */
+static void mcba_usb_xmit_cmd(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg)
+{
+    mcba_usb_xmit(priv, usb_msg, 0);
+}
+
+/* Send data to device */
+static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg, struct sk_buff *skb)
+{
+    struct net_device_stats *stats = &priv->netdev->stats;
+    struct can_frame *cf = 0;
+    struct mcba_urb_ctx *ctx = 0;
     struct urb *urb;
-//	struct usb_8dev_tx_urb_context *context = NULL;
     u8 *buf;
     int err;
-//	size_t size = sizeof(struct usb_8dev_tx_msg);
+
+    printk("mcba_usb_xmit\n");
+
+    ctx = mcba_usb_get_free_ctx(priv);
+    if(!ctx){
+        /* Slow down tx path */
+        netif_stop_queue(priv->netdev);
+
+        return NETDEV_TX_BUSY;
+    }
+
+    if(skb){
+        cf = (struct can_frame *) skb->data;
+        ctx->dlc = cf->can_dlc;
+        can_put_echo_skb(skb, priv->netdev, ctx->ndx);
+        ctx->can_frame = true;
+    }
+    else
+        ctx->can_frame = false;
 
     /* create a URB, and a buffer for it, and copy the data to the URB */
     urb = usb_alloc_urb(0, GFP_ATOMIC);
@@ -523,64 +577,26 @@ static void mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg)
 
     memcpy(buf, usb_msg, MCBA_USB_TX_BUFF_SIZE);
 
-//    for (i = 0; i < MAX_TX_URBS; i++) {
-//        if (priv->tx_contexts[i].echo_index == MAX_TX_URBS) {
-//            context = &priv->tx_contexts[i];
-//            break;
-//        }
-//    }
-
-    /* May never happen! When this happens we'd more URBs in flight as
-     * allowed (MAX_TX_URBS).
-     */
-//    if (!context)
-//        goto nofreecontext;
-
-//    context->priv = priv;
-//    context->echo_index = i;
-//    context->dlc = cf->can_dlc;
-
     usb_fill_bulk_urb(urb, priv->udev,
               usb_sndbulkpipe(priv->udev, MCBA_USB_EP_OUT),
-              buf, MCBA_USB_TX_BUFF_SIZE, mcba_usb_write_bulk_callback, priv);
+              buf, MCBA_USB_TX_BUFF_SIZE, mcba_usb_write_bulk_callback, ctx);
     urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
     usb_anchor_urb(urb, &priv->tx_submitted);
-
-//    can_put_echo_skb(skb, netdev, context->echo_index);
-
-    atomic_inc(&priv->active_tx_urbs);
 
     err = usb_submit_urb(urb, GFP_ATOMIC);
     if (unlikely(err))
         goto failed;
-//    else if (atomic_read(&priv->active_tx_urbs) >= MAX_TX_URBS)
-//        /* Slow down tx path */
-//        netif_stop_queue(netdev);
 
     /* Release our reference to this URB, the USB core will eventually free
      * it entirely.
      */
     usb_free_urb(urb);
 
-//    return NETDEV_TX_OK;
-
-    return;
-
-//nofreecontext:
-//    usb_free_coherent(priv->udev, MCBA_USB_BUFF_SIZE, buf, urb->transfer_dma);
-//    usb_free_urb(urb);
-
-//    netdev_warn(priv->netdev, "couldn't find free context");
-
-//    return NETDEV_TX_BUSY;
+    return NETDEV_TX_OK;
 
 failed:
-//    can_free_echo_skb(netdev, context->echo_index);
-
     usb_unanchor_urb(urb);
     usb_free_coherent(priv->udev, MCBA_USB_TX_BUFF_SIZE, buf, urb->transfer_dma);
-
-    atomic_dec(&priv->active_tx_urbs);
 
     if (err == -ENODEV)
         netif_device_detach(priv->netdev);
@@ -591,11 +607,11 @@ nomembuf:
     usb_free_urb(urb);
 
 nomem:
-//    dev_kfree_skb(skb);
-//    stats->tx_dropped++;
+    can_free_echo_skb(priv->netdev, ctx->ndx);
+    dev_kfree_skb(skb);
+    stats->tx_dropped++;
 
-//    return NETDEV_TX_OK;
-    return;
+    return NETDEV_TX_OK;
 }
 
 static void mcba_usb_xmit_change_bitrate(struct mcba_priv *priv, u16 bitrate)
@@ -606,7 +622,7 @@ static void mcba_usb_xmit_change_bitrate(struct mcba_priv *priv, u16 bitrate)
     usb_msg.bitrate_hi = (0xff00 & bitrate) >> 8;
     usb_msg.bitrate_lo = (0xff & bitrate);
 
-    mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg);
+    mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 }
 
 static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic)
@@ -616,7 +632,7 @@ static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic)
     usb_msg.cmdId = MBCA_CMD_READ_FW_VERSION;
     usb_msg.pic = pic;
 
-    mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg);
+    mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 }
 
 static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination)
@@ -626,7 +642,7 @@ static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination)
     usb_msg.cmdId = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
     usb_msg.termination = termination;
 
-    mcba_usb_xmit(priv, (struct mcba_usb_msg *)&usb_msg);
+    mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 }
 
 /* Open USB device */
@@ -666,7 +682,6 @@ static void mcba_urb_unlink(struct mcba_priv *priv)
     usb_kill_anchored_urbs(&priv->rx_submitted);
 
     usb_kill_anchored_urbs(&priv->tx_submitted);
-    atomic_set(&priv->active_tx_urbs, 0);
 }
 
 /* Close USB device */
@@ -732,7 +747,7 @@ static int mcba_net_get_berr_counter(const struct net_device *netdev,
 static const struct net_device_ops mcba_netdev_ops = {
     .ndo_open = mcba_usb_open,
     .ndo_stop = mcba_usb_close,
-//    .ndo_start_xmit = usb_8dev_start_xmit,
+    .ndo_start_xmit = mcba_usb_start_xmit,
 //    .ndo_change_mtu = can_change_mtu,
 };
 
@@ -908,7 +923,6 @@ static int mcba_usb_probe(struct usb_interface *intf, const struct usb_device_id
 
     init_usb_anchor(&priv->rx_submitted);
     init_usb_anchor(&priv->tx_submitted);
-    atomic_set(&priv->active_tx_urbs, 0);
 
     usb_set_intfdata(intf, priv);
 
