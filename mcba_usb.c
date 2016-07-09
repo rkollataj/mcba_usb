@@ -22,6 +22,19 @@ int debug = 0;
 module_param(debug, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
 MODULE_PARM_DESC(debug, "Debug USB and/or CAN PICs");
 
+/* Required by can-dev however not for the sake of driver as CANBUS is USB based */
+static const struct can_bittiming_const mcba_bittiming_const = {
+        .name = "mcba_usb",
+        .tseg1_min = 1,
+        .tseg1_max = 8,
+        .tseg2_min = 1,
+        .tseg2_max = 8,
+        .sjw_max = 4,
+        .brp_min = 2,
+        .brp_max = 128,
+        .brp_inc = 2,
+};
+
 static ssize_t termination_show(struct device *dev, struct device_attribute *attr,
                       char *buf)
 {

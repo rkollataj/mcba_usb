@@ -91,15 +91,15 @@
 #define MCBA_USB_EID8_EID15_MASK   0x7f80000
 #define MCBA_USB_EID16_EID17_MASK  0x18000000
 #define MCBA_USB_DLC_MASK          0xf
-#define MCBA_USB_RTR_MASK          0x40
-#define MCBA_USB_EXID_MASK         0x80
+#define MCBA_USB_DLC_RTR_MASK      0x40
+#define MCBA_USB_SIDL_EXID_MASK    8
 
 
 #define MCBA_USB_SID0_SID2_SHIFT   5
-#define MCBA_USB_SID3_SID10_SHIFT  0
-#define MCBA_USB_EID0_EID7_SHIFT   0
-#define MCBA_USB_EID8_EID15_SHIFT  0
-#define MCBA_USB_EID16_EID17_SHIFT 0
+#define MCBA_USB_SID3_SID10_SHIFT  3
+#define MCBA_USB_EID0_EID7_SHIFT   11
+#define MCBA_USB_EID8_EID15_SHIFT  19
+#define MCBA_USB_EID16_EID17_SHIFT 27
 #define MCBA_USB_SRR_SHIFT         4
 #define MCBA_USB_DLC_SHIFT         0
 #define MCBA_USB_RTR_SHIFT         6
@@ -117,25 +117,25 @@
 
 #define MCBA_USB_SET_SIDL(can_id)\
 (((can_id & MCBA_USB_SID0_SID2_MASK) << MCBA_USB_SID0_SID2_SHIFT) |\
- ((can_id & MCBA_CAN_EXID_MASK)? MCBA_USB_EXID_MASK : 0) |\
- ((can_id & MCBA_USB_EID16_EID17_MASK) << MCBA_USB_EID16_EID17_SHIFT))
+ ((can_id & MCBA_USB_EID16_EID17_MASK) >> MCBA_USB_EID16_EID17_SHIFT) |\
+ ((can_id & MCBA_CAN_EXID_MASK)? MCBA_USB_SIDL_EXID_MASK : 0))
 
 #define MCBA_USB_SET_SIDH(can_id)\
-((can_id & MCBA_USB_SID3_SID10_MASK) << MCBA_USB_SID3_SID10_SHIFT)
+((can_id & MCBA_USB_SID3_SID10_MASK) >> MCBA_USB_SID3_SID10_SHIFT)
 
 #define MCBA_USB_SET_EIDL(can_id)\
-((can_id & MCBA_USB_EID0_EID7_MASK) << MCBA_USB_EID0_EID7_SHIFT)
+((can_id & MCBA_USB_EID0_EID7_MASK) >> MCBA_USB_EID0_EID7_SHIFT)
 
 #define MCBA_USB_SET_EIDH(can_id)\
-((can_id & MCBA_USB_EID8_EID15_MASK) << MCBA_USB_EID8_EID15_SHIFT)
+((can_id & MCBA_USB_EID8_EID15_MASK) >> MCBA_USB_EID8_EID15_SHIFT)
 
 #define MCBA_USB_SET_DLC(can_id, dlc)\
-((can_id & MCBA_CAN_RTR_MASK)? ((dlc & MCBA_USB_DLC_MASK) | MCBA_USB_RTR_MASK) : (dlc & MCBA_USB_DLC_MASK))
+((can_id & MCBA_CAN_RTR_MASK)? ((dlc & MCBA_USB_DLC_MASK) | MCBA_USB_DLC_RTR_MASK) : (dlc & MCBA_USB_DLC_MASK))
 
 #define MCBA_CAN_GET_SID(usb_msg)\
 (((usb_msg.sidl >> MCBA_USB_SID0_SID2_SHIFT) & MCBA_USB_SID0_SID2_MASK) |\
   (usb_msg.sidh << MCBA_CAN_SID3_SID10_SHIFT) |\
-  ((usb_msg.dlc & MCBA_USB_RTR_MASK)? MCBA_CAN_RTR_MASK : 0))
+  ((usb_msg.dlc & MCBA_USB_DLC_RTR_MASK)? MCBA_CAN_RTR_MASK : 0))
 
 #define MCBA_CAN_GET_EID(usb_msg)\
 (((usb_msg.sidl >> MCBA_USB_SID0_SID2_SHIFT) & MCBA_USB_SID0_SID2_MASK) |\
@@ -143,11 +143,11 @@
   (usb_msg.eidl << MCBA_CAN_EID0_EID7_SHIFT) |\
   (usb_msg.eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
   ((usb_msg.sidl & MCBA_CAN_EID16_EID17_MASK) << MCBA_CAN_EID16_EID17_SHIFT) |\
-  ((usb_msg.dlc & MCBA_USB_RTR_MASK)? MCBA_CAN_RTR_MASK : 0) |\
+  ((usb_msg.dlc & MCBA_USB_DLC_RTR_MASK)? MCBA_CAN_RTR_MASK : 0) |\
   MCBA_CAN_EXID_MASK)
 
 #define MCBA_CAN_SET_ID(usb_msg)\
-((usb_msg.dlc & MCBA_USB_RTR_MASK)? MCBA_CAN_GET_EID(usb_msg) : MCBA_CAN_GET_SID(usb_msg))
+((usb_msg.sidl & MCBA_USB_SIDL_EXID_MASK)? MCBA_CAN_GET_EID(usb_msg) : MCBA_CAN_GET_SID(usb_msg))
 
 struct mcba_usb_ctx {
     struct mcba_priv *priv;
@@ -237,19 +237,6 @@ struct __packed mcba_usb_msg_fw_ver {
     u8 cmdId;
     u8 pic;
     u8 unused[17];
-};
-
-/* Required by can-dev however not for the sake of driver as CANBUS is USB based */
-static const struct can_bittiming_const mcba_bittiming_const = {
-        .name = "mcba_usb",
-        .tseg1_min = 1,
-        .tseg1_max = 8,
-        .tseg2_min = 1,
-        .tseg2_max = 8,
-        .sjw_max = 4,
-        .brp_min = 2,
-        .brp_max = 128,
-        .brp_inc = 2,
 };
 
 static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv, struct mcba_usb_msg *usb_msg, struct sk_buff *skb);
