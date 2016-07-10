@@ -11,11 +11,6 @@ install: all
 	sudo depmod -a
 
 test:
-	rm tests/mcba_tests
 	g++ -lgtest_main -lgtest -lpthread ./tests/mcba_tests.cpp -o ./tests/mcba_tests
 	./tests/mcba_tests --gtest_break_on_failure
-
-#start: install
-#	-sudo rmmod mcba_usb
-#	sudo modprobe mcba_usb
 
