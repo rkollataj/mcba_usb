@@ -4,10 +4,10 @@ The CAN BUS Analyzer Tool is a simple to use low cost CAN bus monitor which can 
 
 [Product site](http://www.microchip.com/Developmenttools/ProductDetails.aspx?PartNO=APGDT002)
 
-The tool is supported on Windows environment only. This project adds support for the tool to Linux Kernel (SocketCAN). 
+Originally the tool is supported on Windows environment only. This project adds support for the tool to Linux Kernel (SocketCAN). 
 
 ## Current status
-The work on driver is ongoing. Basic functionality like configuration, sending and receiving CAN frames. Shall work already.
+The work on the driver is ongoing. Basic functionality like configuration, sending and receiving CAN frames. Shall work already.
 
 ## Usage
 ### Building and installing
