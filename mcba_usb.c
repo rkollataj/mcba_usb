@@ -1,3 +1,22 @@
+/* SocketCAN driver for Microchip CAN BUS Analyzer Tool
+ *
+ * Copyright (C) Mobica Limited
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published
+ * by the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.
+ *
+ * This driver is inspired by the 4.6.2 version of drivers/net/can/usb/usb_8dev.c
+ */
+
 #include <linux/signal.h>
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -888,4 +907,5 @@ static struct usb_driver mcba_usb_driver = {
 module_usb_driver(mcba_usb_driver);
 
 MODULE_AUTHOR("Remigiusz Kołłątaj <remigiusz.kollataj@mobica.com>");
+MODULE_DESCRIPTION("SocketCAN driver for Microchip CAN BUS Analyzer Tool");
 MODULE_LICENSE("GPL v2");
