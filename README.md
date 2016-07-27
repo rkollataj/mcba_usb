@@ -6,6 +6,9 @@ The CAN BUS Analyzer Tool is a simple to use low cost CAN bus monitor which can 
 
 The tool is supported on Windows environment only. This project adds support for the tool to Linux Kernel (SocketCAN). 
 
+## Current status
+The work on driver is ongoing. Basic functionality like configuration, sending and receiving CAN frames. Shall work already.
+
 ## Usage
 ### Building and installing
 ```
@@ -52,7 +55,7 @@ The tool works internally with 40Mhz clock. Following bus speed are supported by
 * 800 Kbps
 * 1000 Kbps
 
-Bittiming parameters are hardcoded inside device. 
+Note: Bittiming parameters are hardcoded inside device. Only speed can be configured using iproute2 utils.
 
 ### Termination
 The tool supports build in termination. It can be controlled by sysfs. To read current termination status:
