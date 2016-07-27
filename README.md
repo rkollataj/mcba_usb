@@ -15,38 +15,45 @@ make
 make install
 modprobe mcba_usb
 ```
+### Basic SocketCAN usage
+To start SocketCAN interface:
+```
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can0 up
+```
+To send CAN frame:
+```
+cansend can0 001#DEADBEEF
+cansend can0 1000001#DEADBEEF
+```
+To dump CAN frames:
+```
+candump can0
+```
+
 ### Supported bus settings
-The tool works internally with 40Mhz clock. Following setting are supported by default:
-* 20 KBps
-** BRP: 100
-** SJW: 1
-** PROP: 5
-** SEG1: 8
-** SEG2: 6
-* 33.3 KBps
-** BRP: 48
-** SJW: 1
-** PROP: 8
-** SEG1: 8
-** SEG2: 8
-* 50 KBps
-** BRP: 40
-** SJW: 1
-** PROP: 8
-** SEG1: 7
-** SEG2: 4
-* 80 KBps
-** BRP: 20
-** SJW: 1
-** PROP: 8
-** SEG1: 8
-** SEG2: 8
-* 83.3 KBps
-** BRP: 20
-** SJW: 1
-** PROP: 8
-** SEG1: 8
-** SEG2: 7
+The tool works internally with 40Mhz clock. Following bus speed are supported by default:
+* 20 Kbps
+* 33.3 Kbps
+* 50 Kbps
+* 80 Kbps
+* 83.3 Kbps
+* 100 Kbps
+* 125 Kbps
+* 150 Kbps
+* 175 Kbps
+* 200 Kbps
+* 225 Kbps
+* 250 Kbps
+* 275 Kbps
+* 300 Kbps
+* 500 Kbps
+* 625 Kbps
+* 800 Kbps
+* 1000 Kbps
+
+Bittiming parameters are hardcoded inside device. 
+
 ### Termination
 The tool supports build in termination. It can be controlled by sysfs. To read current termination status:
 ```
