@@ -48,6 +48,8 @@
 #define MBCA_CMD_TRANSMIT_MESSAGE_EV            0xA3
 #define MBCA_CMD_SETUP_TERMINATION_RESISTANCE   0xA8
 #define MBCA_CMD_READ_FW_VERSION                0xA9
+#define MBCA_CMD_NOTHING_TO_SEND                0xFF
+#define MBCA_CMD_TRANSMIT_MESSAGE_RSP           0xE2
 
 /* supported bitrates */
 #define MCBA_BITRATE_20_KBPS_40MHZ      19940
