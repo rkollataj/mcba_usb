@@ -7,6 +7,8 @@
 
 #include <linux/can.h>
 #include <linux/can/raw.h>
+#include <thread>
+#include <future>
 
 #define u8 uint8_t
 #define u32 uint32_t
@@ -72,7 +74,25 @@ int writeCAN(int canFd, canid_t id, u8 dlc, ...)
 
 int readCAN(int canFd, struct can_frame *frame)
 {
-    return read(canFd, frame, sizeof(struct can_frame));
+    fd_set rfds;
+    struct timeval tv;
+    int retval;
+
+    FD_ZERO(&rfds);
+    FD_SET(canFd, &rfds);
+
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    retval = select(canFd+1, &rfds, NULL, NULL, &tv);
+
+    EXPECT_GT(retval, -1);
+
+    if (retval)
+    {
+        retval = read(canFd, frame, sizeof(struct can_frame));
+    }
+
+    return retval;
 }
 
 void configureCAN(const char *canName, int speed)
@@ -249,51 +269,6 @@ TEST(Configuration, SpeedSettings)
     EXPECT_EQ(0, system("sudo ip link set can0 down"));
 }
 
-TEST(Configuration, SpeedSettingsWithTransmission)
-{
-    const int bitrateSet[] = {20000, 33333, 50000, 80000, 83333, 100000,
-                             125000, 150000, 175000, 200000, 225000, 250000,
-                            275000, 300000, 500000, 625000, 800000, 1000000};
-
-    int can0 = 0;
-    int can1 = 0;
-    int can0_term = -1;
-    int can1_term = -1;
-    int dataSent = 0;
-    can_frame frame;
-
-    can0_term = getTermination("can0");
-    can1_term = getTermination("can1");
-
-    setTermination("can0", '1');
-    setTermination("can1", '0');
-
-    for(int i = 0; i < 18; ++i)
-    {
-        configureCAN("can0", bitrateSet[i]);
-        configureCAN("can1", bitrateSet[i]);
-
-        can0 = openCANSocket("can0");
-        EXPECT_GT(can0, 0);
-
-        can1 = openCANSocket("can1");
-        EXPECT_GT(can1, 0);
-
-        dataSent = writeCAN(can0, i, 2, i, i+10);
-        EXPECT_EQ(dataSent, CAN_MTU);
-
-        dataSent = readCAN(can1, &frame);
-        EXPECT_EQ(dataSent, CAN_MTU);
-
-        close(can0);
-        close(can1);
-    }
-
-    //bring back original termination
-    setTermination("can0", can0_term);
-    setTermination("can1", can1_term);
-}
-
 TEST(Configuration, Termination)
 {
     FILE *f = 0;
@@ -302,31 +277,117 @@ TEST(Configuration, Termination)
     const char *termPath = "/sys/class/net/can0/termination";
     char buff[100];
 
-    sprintf(buff, "ls %s", termPath);
+    sprintf(buff, "ls %s > /dev/null", termPath);
     EXPECT_EQ(0, system(buff));
 
-    f = fopen(termPath, "w+");
-    EXPECT_NE(0, *((int *)f));
+    initValue = getTermination("can0");
 
-    // get initial value
-    EXPECT_EQ(1, fread(&initValue, 1, 1, f));
-    EXPECT_NE(-1, initValue);
-
-    EXPECT_EQ(1, fwrite("1", 1, 1, f));
-    rewind(f);
-    EXPECT_EQ(1, fread(&value, 1, 1, f));
+    setTermination("can0", '1');
+    value = -1;
+    value = getTermination("can0");
     EXPECT_EQ('1', value);
 
-    EXPECT_EQ(1, fwrite("0", 1, 1, f));
-    rewind(f);
-    EXPECT_EQ(1, fread(&value, 1, 1, f));
+    setTermination("can0", '0');
+    value = -1;
+    value = getTermination("can0");
     EXPECT_EQ('0', value);
 
-    // set original value
-    EXPECT_EQ(1, fwrite(&initValue, 1, 1, f));
-    rewind(f);
-    EXPECT_EQ(1, fread(&value, 1, 1, f));
-    EXPECT_EQ(initValue, value);
+    setTermination("can0", '1');
+    value = -1;
+    value = getTermination("can0");
+    EXPECT_EQ('1', value);
 
-    fclose(f);
+    for(u8 i = 0; i < '0'; ++i)
+    {
+        setTermination("can0", i);
+        value = -1;
+        value = getTermination("can0");
+        EXPECT_EQ('1', value);
+    }
+
+    for(u8 i = '2'; i > 0; ++i)
+    {
+        setTermination("can0", i);
+        value = -1;
+        value = getTermination("can0");
+        EXPECT_EQ('1', value);
+    }
+
+    setTermination("can0", initValue);
+    value = -1;
+    value = getTermination("can0");
+    EXPECT_EQ(initValue, value);
 }
+
+
+//int canReadThread(const char* ifname)
+//{
+//    int canFd = 0;
+//    can_frame frame;
+//    int retVal;
+//    int i = 0;
+
+////    configureCAN(ifname, 1000000);
+//    canFd = openCANSocket(ifname);
+
+//    do
+//    {
+//        retVal = readCAN(canFd, &frame);
+
+//        if(retVal)
+//        {
+//            ++i;
+//        }
+//    }
+//    while(retVal);
+
+//    close(canFd);
+
+//    return i;
+//}
+
+//int canWriteThread(const char* ifname, const int cnt)
+//{
+//    int canFd = 0;
+//    int i = 0;
+//    int dataSent = 0;
+
+////    configureCAN(ifname, 1000000);
+//    canFd = openCANSocket(ifname);
+
+//    for(i = 1; i <= cnt; ++i)
+//    {
+//        dataSent = writeCAN(canFd, i, 8, 1, 2, 3, 4, 5, 6, 7, 8);
+
+//        usleep(10000);
+
+//        EXPECT_EQ(dataSent, CAN_MTU);
+//    }
+
+//    close(canFd);
+
+//    return i-1;
+//}
+
+//TEST(StressTest, 1on1)
+//{
+//    int can0_term = -1;
+//    int can1_term = -1;
+//    const int testCnt = 1000;
+
+//    can0_term = getTermination("can0");
+//    can1_term = getTermination("can1");
+
+//    setTermination("can0", '1');
+//    setTermination("can1", '0');
+
+//    std::future<int> readRet = std::async(&canReadThread, "can0");
+//    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt);
+
+//    EXPECT_EQ(testCnt, writeRet.get());
+//    EXPECT_EQ(testCnt, readRet.get());
+
+//    //bring back original termination
+//    setTermination("can0", can0_term);
+//    setTermination("can1", can1_term);
+//}
