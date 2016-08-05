@@ -69,7 +69,7 @@ static ssize_t termination_store(struct device *dev,
 {
     struct net_device *netdev = to_net_dev(dev);
     struct mcba_priv *priv = netdev_priv(netdev);
-    u8 tmp_termination = 0;
+    u8 tmp_termination = -1;
 
     sscanf(buf, "%hhu", &tmp_termination);
 
