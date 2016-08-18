@@ -14,7 +14,7 @@
  * You should have received a copy of the GNU General Public License along
  * with this program.
  *
- * This driver is inspired by the 4.6.2 version of drivers/net/can/usb/usb_8dev.c
+ * This driver is inspired by the 4.6.2 version of net/can/usb/usb_8dev.c
  */
 
 /* vendor and product id */
@@ -28,7 +28,8 @@
 #define MCBA_CTX_FREE            MCBA_MAX_TX_URBS
 
 /* RX buffer must be bigger than msg size since at the
- * beggining USB messages are stacked. */
+ * beggining USB messages are stacked.
+ */
 #define MCBA_USB_RX_BUFF_SIZE    64
 #define MCBA_USB_TX_BUFF_SIZE    (sizeof(struct mcba_usb_msg))
 
@@ -36,8 +37,9 @@
 #define MCBA_USB_EP_IN           1
 #define MCBA_USB_EP_OUT          1
 
-/* Not required by driver itself as CANBUS is USB based */
-/* Used internally by candev for bitrate calculation    */
+/* Not required by driver itself as CANBUS is USB based
+ * Used internally by candev for bitrate calculation
+ */
 #define MCBA_CAN_CLOCK           40000000
 
 /* Microchip command id */
@@ -115,10 +117,10 @@
 ((can_id & MCBA_CAN_S_SID0_SID2_MASK) << MCBA_SIDL_SID0_SID2_SHIFT)
 
 #define MCBA_SET_E_SIDL(can_id)\
-((((can_id & MCBA_CAN_E_SID0_SID2_MASK) >> MCBA_CAN_E_SID0_SID2_SHIFT) \
-    << MCBA_SIDL_SID0_SID2_SHIFT) |\
- ((can_id & MCBA_CAN_EID16_EID17_MASK) >> MCBA_CAN_EID16_EID17_SHIFT) |\
- MCBA_SIDL_EXID_MASK)
+((((can_id & MCBA_CAN_E_SID0_SID2_MASK) >> MCBA_CAN_E_SID0_SID2_SHIFT)\
+<< MCBA_SIDL_SID0_SID2_SHIFT) |\
+((can_id & MCBA_CAN_EID16_EID17_MASK) >> MCBA_CAN_EID16_EID17_SHIFT) |\
+MCBA_SIDL_EXID_MASK)
 
 #define MCBA_SET_S_SIDH(can_id)\
 ((can_id & MCBA_CAN_S_SID3_SID10_MASK) >> MCBA_CAN_S_SID3_SID10_SHIFT)
@@ -134,16 +136,16 @@
 
 #define MCBA_CAN_GET_SID(usb_msg)\
 (((usb_msg->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) |\
-  (usb_msg->sidh << MCBA_CAN_S_SID3_SID10_SHIFT))
+(usb_msg->sidh << MCBA_CAN_S_SID3_SID10_SHIFT))
 
 #define MCBA_CAN_GET_EID(usb_msg)\
 (((usb_msg->sidh << MCBA_CAN_E_SID3_SID10_SHIFT) |\
-  ((usb_msg->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) \
-    << MCBA_CAN_E_SID0_SID2_SHIFT) |\
-  ((usb_msg->sidl & MCBA_SIDL_EID16_EID17_MASK) << MCBA_CAN_EID16_EID17_SHIFT)|\
-  (usb_msg->eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
-  usb_msg->eidl |\
-  MCBA_CAN_EXID_MASK)
+((usb_msg->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) \
+<< MCBA_CAN_E_SID0_SID2_SHIFT) |\
+((usb_msg->sidl & MCBA_SIDL_EID16_EID17_MASK) << MCBA_CAN_EID16_EID17_SHIFT)|\
+(usb_msg->eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
+usb_msg->eidl |\
+MCBA_CAN_EXID_MASK)
 
 #define MCBA_RX_IS_EXID(usb_msg)    (usb_msg->sidl & MCBA_SIDL_EXID_MASK)
 #define MCBA_RX_IS_RTR(usb_msg)     (usb_msg->dlc & MCBA_DLC_RTR_MASK)
@@ -151,101 +153,101 @@
 #define MCBA_TX_IS_RTR(can_frame)   (can_frame->can_id & MCBA_CAN_RTR_MASK)
 
 struct mcba_usb_ctx {
-    struct mcba_priv *priv;
-    u32 ndx;
-    u8 dlc;
-    bool can;
+	struct mcba_priv *priv;
+	u32 ndx;
+	u8 dlc;
+	bool can;
 };
 
 /* Structure to hold all of our device specific stuff */
 struct mcba_priv {
-    struct can_priv can; /* must be the first member */
-    struct sk_buff *echo_skb[MCBA_MAX_TX_URBS];
-    struct mcba_usb_ctx tx_context[MCBA_MAX_TX_URBS];
+	struct can_priv can; /* must be the first member */
+	struct sk_buff *echo_skb[MCBA_MAX_TX_URBS];
+	struct mcba_usb_ctx tx_context[MCBA_MAX_TX_URBS];
 
-    struct usb_device *udev;
-    struct net_device *netdev;
-    struct usb_anchor tx_submitted;
-    struct usb_anchor rx_submitted;
-    struct can_berr_counter bec;
-    u8 pic_usb_sw_ver_major;
-    u8 pic_usb_sw_ver_minor;
-    u8 pic_can_sw_ver_major;
-    u8 pic_can_sw_ver_minor;
-    u8 termination_state;
+	struct usb_device *udev;
+	struct net_device *netdev;
+	struct usb_anchor tx_submitted;
+	struct usb_anchor rx_submitted;
+	struct can_berr_counter bec;
+	u8 pic_usb_sw_ver_major;
+	u8 pic_usb_sw_ver_minor;
+	u8 pic_can_sw_ver_major;
+	u8 pic_can_sw_ver_minor;
+	u8 termination_state;
 };
 
 /* command frame */
 struct __packed mcba_usb_msg_can {
-    u8 cmdId;
-    u8 eidh;
-    u8 eidl;
-    u8 sidh;
-    u8 sidl;
-    u8 dlc;
-    u8 data[8];
-    u8 timestamp[4];
-    u8 checksum;
+	u8 cmdId;
+	u8 eidh;
+	u8 eidl;
+	u8 sidh;
+	u8 sidl;
+	u8 dlc;
+	u8 data[8];
+	u8 timestamp[4];
+	u8 checksum;
 };
 
 /* command frame */
 struct __packed mcba_usb_msg {
-    u8 cmdId;
-    u8 unused[18];
+	u8 cmdId;
+	u8 unused[18];
 };
 
 struct __packed mcba_usb_msg_keep_alive_usb {
-    u8 cmd_id;
-    u8 termination_state;
-    u8 soft_ver_major;
-    u8 soft_ver_minor;
-    u8 unused[15];
+	u8 cmd_id;
+	u8 termination_state;
+	u8 soft_ver_major;
+	u8 soft_ver_minor;
+	u8 unused[15];
 };
 
 struct __packed mcba_usb_msg_keep_alive_can {
-    u8 cmd_id;
-    u8 tx_err_cnt;
-    u8 rx_err_cnt;
-    u8 rx_buff_ovfl;
-    u8 tx_bus_off;
-    u8 can_bitrate_hi;
-    u8 can_bitrate_lo;
-    u8 rx_lost_lo;
-    u8 rx_lost_hi;
-    u8 can_stat;
-    u8 soft_ver_major;
-    u8 soft_ver_minor;
-    u8 debug_mode;
-    u8 test_complete;
-    u8 test_result;
-    u8 unused[4];
+	u8 cmd_id;
+	u8 tx_err_cnt;
+	u8 rx_err_cnt;
+	u8 rx_buff_ovfl;
+	u8 tx_bus_off;
+	u8 can_bitrate_hi;
+	u8 can_bitrate_lo;
+	u8 rx_lost_lo;
+	u8 rx_lost_hi;
+	u8 can_stat;
+	u8 soft_ver_major;
+	u8 soft_ver_minor;
+	u8 debug_mode;
+	u8 test_complete;
+	u8 test_result;
+	u8 unused[4];
 };
 
 struct __packed mcba_usb_msg_change_bitrate {
-    u8 cmd_id;
-    u8 bitrate_hi;
-    u8 bitrate_lo;
-    u8 unused[16];
+	u8 cmd_id;
+	u8 bitrate_hi;
+	u8 bitrate_lo;
+	u8 unused[16];
 };
 
 struct __packed mcba_usb_msg_terminaton {
-    u8 cmdId;
-    u8 termination;
-    u8 unused[17];
+	u8 cmdId;
+	u8 termination;
+	u8 unused[17];
 };
 
 struct __packed mcba_usb_msg_fw_ver {
-    u8 cmdId;
-    u8 pic;
-    u8 unused[17];
+	u8 cmdId;
+	u8 pic;
+	u8 unused[17];
 };
 
 static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
-                                 struct mcba_usb_msg *usb_msg,
-                                 struct sk_buff *skb);
+				 struct mcba_usb_msg *usb_msg,
+				 struct sk_buff *skb);
 
-static void mcba_usb_xmit_cmd(struct mcba_priv *priv, struct
-                              mcba_usb_msg *usb_msg);
+static void mcba_usb_xmit_cmd(struct mcba_priv *priv,
+			      struct mcba_usb_msg *usb_msg);
 
 static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic);
 static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination);
