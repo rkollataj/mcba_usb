@@ -17,6 +17,9 @@
  * This driver is inspired by the 4.6.2 version of net/can/usb/usb_8dev.c
  */
 
+#ifndef __MCBA_USB_H
+#define __MCBA_USB_H
+
 /* vendor and product id */
 #define MCBA_MODULE_NAME         "mcba_usb"
 #define MCBA_VENDOR_ID           0x04d8
@@ -252,3 +255,5 @@ static void mcba_usb_xmit_cmd(struct mcba_priv *priv,
 static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic);
 static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination);
 static inline void mcba_init_ctx(struct mcba_priv *priv);
+
+#endif /*__MCBA_USB_H */
