@@ -15,8 +15,8 @@ The work on the driver is ongoing. Basic functionality like configuration, sendi
 git clone https://github.com/rkollataj/mcba_usb.git
 cd mcba_usb
 make
-make install
-modprobe mcba_usb
+sudo make install
+sudo modprobe mcba_usb
 ```
 ### Basic SocketCAN usage
 To start SocketCAN interface:
