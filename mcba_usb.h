@@ -84,10 +84,6 @@
 #define MCBA_IS_CAN_DEBUG()         (debug & MCBA_PARAM_DEBUG_CAN)
 
 #define MCBA_VER_UNDEFINED           0xFF
-#define MCBA_VER_USB_MAJOR           2
-#define MCBA_VER_USB_MINOR           0
-#define MCBA_VER_CAN_MAJOR           2
-#define MCBA_VER_CAN_MINOR           3
 #define MCBA_VER_REQ_USB             1
 #define MCBA_VER_REQ_CAN             2
 

@@ -131,15 +131,10 @@ static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv,
 
 	if ((priv->pic_usb_sw_ver_major == MCBA_VER_UNDEFINED) &&
 	   (priv->pic_usb_sw_ver_minor == MCBA_VER_UNDEFINED)) {
-		netdev_info(priv->netdev, "PIC USB version %hhu.%hhu\n",
-			    msg->soft_ver_major, msg->soft_ver_minor);
 
-		if (!(msg->soft_ver_major == MCBA_VER_USB_MAJOR) &&
-		   (msg->soft_ver_minor == MCBA_VER_USB_MINOR)) {
-			netdev_warn(priv->netdev,
-				    "Driver tested against PIC USB %hhu.%hhu version only\n",
-				    MCBA_VER_USB_MAJOR, MCBA_VER_USB_MINOR);
-		}
+		netdev_info(priv->netdev,
+			    "PIC USB version %hhu.%hhu\n",
+			    msg->soft_ver_major, msg->soft_ver_minor);
 	}
 
 	priv->pic_usb_sw_ver_major = msg->soft_ver_major;
@@ -165,16 +160,10 @@ static void mcba_usb_process_keep_alive_can(struct mcba_priv *priv,
 
 	if ((priv->pic_can_sw_ver_major == MCBA_VER_UNDEFINED) &&
 	   (priv->pic_can_sw_ver_minor == MCBA_VER_UNDEFINED)) {
+
 		netdev_info(priv->netdev,
 			    "PIC CAN version %hhu.%hhu\n",
 			    msg->soft_ver_major, msg->soft_ver_minor);
-
-		if (!(msg->soft_ver_major == MCBA_VER_CAN_MAJOR) &&
-		   (msg->soft_ver_minor == MCBA_VER_CAN_MINOR)) {
-			netdev_warn(priv->netdev,
-				    "Driver tested against PIC CAN %hhu.%hhu version only\n",
-				    MCBA_VER_CAN_MAJOR, MCBA_VER_CAN_MINOR);
-		}
 	}
 
 	priv->bec.txerr = msg->tx_err_cnt;
@@ -477,7 +466,8 @@ static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
 	}
 
 	if (skb) {
-		ctx->dlc = ((struct mcba_usb_msg_can *)usb_msg)->dlc;
+		ctx->dlc = ((struct mcba_usb_msg_can *)usb_msg)->dlc
+				& MCBA_DLC_MASK;
 		can_put_echo_skb(skb, priv->netdev, ctx->ndx);
 		ctx->can = true;
 	} else {
@@ -778,8 +768,9 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	int err = -ENOMEM;
 	struct usb_device *usbdev = interface_to_usbdev(intf);
 
-	dev_info(&intf->dev, "%s: Microchip CAN BUS analizer connected\n",
-		 MCBA_MODULE_NAME);
+	dev_info(&intf->dev, "Microchip CAN BUS analizer connected\n");
+	dev_info(&intf->dev, "Supported PIC USB versions: 2.0\n");
+	dev_info(&intf->dev, "Supported PIC CAN versions: 2.3\n");
 
 	netdev = alloc_candev(sizeof(struct mcba_priv), MCBA_MAX_TX_URBS);
 	if (!netdev) {

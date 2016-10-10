@@ -146,7 +146,7 @@ void setTermination(const char *interface, char val)
     fclose(f);
 }
 
-int canReadThread(const char* ifname)
+int canReadThread(const char* ifname, u32 flags)
 {
     int canFd = 0;
     can_frame frame;
@@ -158,12 +158,12 @@ int canReadThread(const char* ifname)
 
     do
     {
-    retVal = readCAN(canFd, &frame);
+	retVal = readCAN(canFd, &frame);
 
-    if(retVal)
-    {
-        EXPECT_EQ(i++, frame.can_id);
-    }
+	if(retVal)
+	{
+	    EXPECT_EQ(i++ | flags, frame.can_id);
+	}
     }
     while(retVal);
 
@@ -197,7 +197,7 @@ int canReadThreadNoId(const char* ifname)
     return i;
 }
 
-int canWriteThread(const char* ifname, const int cnt)
+int canWriteThread(const char* ifname, const int cnt, u32 flags)
 {
     int canFd = 0;
     canid_t i = 0;
@@ -208,11 +208,11 @@ int canWriteThread(const char* ifname, const int cnt)
 
     for(i = 0; i <= cnt; ++i)
     {
-    dataSent = writeCAN(canFd, i, 8, 1, 2, 3, 4, 5, 6, 7, 8);
+	dataSent = writeCAN(canFd, i | flags, 8, 1, 2, 3, 4, 5, 6, 7, 8);
 
-    usleep(1500);
+	usleep(1500);
 
-    EXPECT_EQ(dataSent, CAN_MTU);
+	EXPECT_EQ(dataSent, CAN_MTU);
     }
 
     close(canFd);
@@ -220,7 +220,7 @@ int canWriteThread(const char* ifname, const int cnt)
     return i;
 }
 
-int canReadThreadExt(const char* ifname, canid_t start, canid_t shift)
+int canReadThreadExt(const char* ifname, canid_t start, canid_t shift, u32 flags)
 {
     int canFd = 0;
     can_frame frame;
@@ -239,7 +239,7 @@ int canReadThreadExt(const char* ifname, canid_t start, canid_t shift)
         {
             shifted = i++ << shift;
 
-            EXPECT_EQ(shifted | CAN_EFF_FLAG, frame.can_id);
+	    EXPECT_EQ(shifted | flags, frame.can_id);
         }
 
     } while(retVal);
@@ -249,7 +249,7 @@ int canReadThreadExt(const char* ifname, canid_t start, canid_t shift)
     return i;
 }
 
-int canWriteThreadExt(const char* ifname, canid_t start, canid_t cnt, canid_t shift)
+int canWriteThreadExt(const char* ifname, canid_t start, canid_t cnt, canid_t shift, u32 flags)
 {
     int canFd = 0;
     canid_t i = 0;
@@ -263,7 +263,7 @@ int canWriteThreadExt(const char* ifname, canid_t start, canid_t cnt, canid_t sh
     {
         shifted = i << shift;
 
-        dataSent = writeCAN(canFd, shifted | CAN_EFF_FLAG, 8, 1, 2, 3, 4, 5, 6, 7, 8);
+	dataSent = writeCAN(canFd, shifted | flags, 8, 1, 2, 3, 4, 5, 6, 7, 8);
 
         usleep(500);
 
@@ -282,12 +282,110 @@ int canWriteThreadExt(const char* ifname, canid_t start, canid_t cnt, canid_t sh
  *
  ***********************************************/
 
+TEST(canIDConvertion, standardId)
+{
+    uint32_t canIdConverted = 0;
+    mcba_usb_msg_can usb_msg;
+    struct can_frame cf;
+
+    for(uint32_t i = 1; i < 2048; ++i)
+    {
+	cf.can_id = i;
+
+	usb_msg.sidl = MCBA_SET_S_SIDL(cf.can_id);
+	usb_msg.sidh = MCBA_SET_S_SIDH(cf.can_id);
+	usb_msg.eidl = 0;
+	usb_msg.eidh = 0;
+
+	canIdConverted = MCBA_CAN_GET_SID((&usb_msg));
+
+	EXPECT_EQ(cf.can_id, canIdConverted);
+    }
+}
+
+TEST(canIDConvertion, standardIdRTR)
+{
+    uint32_t canIdConverted = 0;
+    mcba_usb_msg_can usb_msg;
+    struct can_frame cf;
+
+    for(uint32_t i = 1; i < 2048; ++i)
+    {
+	cf.can_id = i | MCBA_CAN_RTR_MASK;
+
+	usb_msg.sidl = MCBA_SET_S_SIDL(cf.can_id);
+	usb_msg.sidh = MCBA_SET_S_SIDH(cf.can_id);
+	usb_msg.eidl = 0;
+	usb_msg.eidh = 0;
+	usb_msg.dlc = MCBA_DLC_RTR_MASK;
+
+	canIdConverted = MCBA_CAN_GET_SID((&usb_msg));
+
+	if(MCBA_RX_IS_RTR((&usb_msg)))
+	    canIdConverted |= MCBA_CAN_RTR_MASK;
+
+	EXPECT_EQ(cf.can_id, canIdConverted);
+    }
+}
+
+TEST(canIDConvertion, extendedId)
+{
+    uint32_t canIdConverted = 0;
+    mcba_usb_msg_can usb_msg;
+    struct can_frame cf;
+
+    for(uint32_t i = 1; i < 0x20000000; ++i)
+    {
+	cf.can_id = i | MCBA_CAN_EXID_MASK;
+
+	usb_msg.sidl = MCBA_SET_E_SIDL(cf.can_id);
+	usb_msg.sidh = MCBA_SET_E_SIDH(cf.can_id);
+	usb_msg.eidl = MCBA_SET_EIDL(cf.can_id);
+	usb_msg.eidh = MCBA_SET_EIDH(cf.can_id);
+
+	canIdConverted = MCBA_CAN_GET_EID((&usb_msg));
+
+	if(MCBA_RX_IS_EXID((&usb_msg)))
+	    canIdConverted |= MCBA_CAN_EXID_MASK;
+
+	EXPECT_EQ(cf.can_id, canIdConverted);
+    }
+}
+
+TEST(canIDConvertion, extendedIdRTR)
+{
+    uint32_t canIdConverted = 0;
+    mcba_usb_msg_can usb_msg;
+    struct can_frame cf;
+
+    for(uint32_t i = 1; i < 0x20000000; ++i)
+    {
+	cf.can_id = i | MCBA_CAN_RTR_MASK | MCBA_CAN_EXID_MASK;
+
+	usb_msg.sidl = MCBA_SET_E_SIDL(cf.can_id);
+	usb_msg.sidh = MCBA_SET_E_SIDH(cf.can_id);
+	usb_msg.eidl = MCBA_SET_EIDL(cf.can_id);
+	usb_msg.eidh = MCBA_SET_EIDH(cf.can_id);
+	usb_msg.dlc = MCBA_DLC_RTR_MASK;
+
+	canIdConverted = MCBA_CAN_GET_EID((&usb_msg));
+
+	if(MCBA_RX_IS_EXID((&usb_msg)))
+	    canIdConverted |= MCBA_CAN_EXID_MASK;
+
+	if(MCBA_RX_IS_RTR((&usb_msg)))
+	    canIdConverted |= MCBA_CAN_RTR_MASK;
+
+	EXPECT_EQ(cf.can_id, canIdConverted);
+    }
+}
+
 TEST(can_id_rcv, sid)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet = std::async(&canReadThread, "can0");
-    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt);
+    std::future<int> readRet = std::async(&canReadThread, "can0", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet.get());
@@ -299,8 +397,8 @@ TEST(can_id_rcv, eid_sid3_sid10)
     const canid_t cnt = 0xff;
     const canid_t shift = MCBA_CAN_E_SID3_SID10_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -312,8 +410,8 @@ TEST(can_id_rcv, eid_sid0_sid2)
     const canid_t cnt = 7;
     const canid_t shift = MCBA_CAN_E_SID0_SID2_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -325,8 +423,8 @@ TEST(can_id_rcv, eid_eid16_eid17)
     const canid_t cnt = 3;
     const canid_t shift = MCBA_CAN_EID16_EID17_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -338,8 +436,8 @@ TEST(can_id_rcv, eid_eid8_eid15)
     const canid_t cnt = 0xff;
     const canid_t shift = MCBA_CAN_EID8_EID15_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -351,8 +449,84 @@ TEST(can_id_rcv, eid_eid0_eid7)
     const canid_t cnt = 0xff;
     const canid_t shift = 0;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_rcv_rtr, sid)
+{
+    const int testCnt = 0x7ff;
+
+    std::future<int> readRet = std::async(&canReadThread, "can0", CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt, CAN_RTR_FLAG);
+
+    EXPECT_EQ(testCnt+1, writeRet.get());
+    EXPECT_EQ(testCnt+1, readRet.get());
+}
+
+TEST(can_id_rcv_rtr, eid_sid3_sid10)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 0xff;
+    const canid_t shift = MCBA_CAN_E_SID3_SID10_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_rcv_rtr, eid_sid0_sid2)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 7;
+    const canid_t shift = MCBA_CAN_E_SID0_SID2_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_rcv_rtr, eid_eid16_eid17)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 3;
+    const canid_t shift = MCBA_CAN_EID16_EID17_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_rcv_rtr, eid_eid8_eid15)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 0xff;
+    const canid_t shift = MCBA_CAN_EID8_EID15_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_rcv_rtr, eid_eid0_eid7)
+{
+    const canid_t start = 0;
+    const canid_t cnt = 0xff;
+    const canid_t shift = 0;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can0", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can1", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -362,8 +536,8 @@ TEST(can_id_snd, sid)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet = std::async(&canReadThread, "can1");
-    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt);
+    std::future<int> readRet = std::async(&canReadThread, "can1", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet.get());
@@ -376,8 +550,8 @@ TEST(can_id_snd, eid_sid3_sid10)
     const canid_t cnt = 0xff;
     const canid_t shift = MCBA_CAN_E_SID3_SID10_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -389,8 +563,8 @@ TEST(can_id_snd, eid_sid0_sid2)
     const canid_t cnt = 7;
     const canid_t shift = MCBA_CAN_E_SID0_SID2_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -402,8 +576,8 @@ TEST(can_id_snd, eid_eid16_eid17)
     const canid_t cnt = 3;
     const canid_t shift = MCBA_CAN_EID16_EID17_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -415,8 +589,8 @@ TEST(can_id_snd, eid_eid8_eid15)
     const canid_t cnt = 0xff;
     const canid_t shift = MCBA_CAN_EID8_EID15_SHIFT;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -428,8 +602,85 @@ TEST(can_id_snd, eid_eid0_eid7)
     const canid_t cnt = 0xff;
     const canid_t shift = 0;
 
-    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift);
-    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift);
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_snd_rtr, sid)
+{
+    const int testCnt = 0x7ff;
+
+    std::future<int> readRet = std::async(&canReadThread, "can1", CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt, CAN_RTR_FLAG);
+
+    EXPECT_EQ(testCnt+1, writeRet.get());
+    EXPECT_EQ(testCnt+1, readRet.get());
+}
+
+
+TEST(can_id_snd_rtr, eid_sid3_sid10)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 0xff;
+    const canid_t shift = MCBA_CAN_E_SID3_SID10_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_snd_rtr, eid_sid0_sid2)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 7;
+    const canid_t shift = MCBA_CAN_E_SID0_SID2_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_snd_rtr, eid_eid16_eid17)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 3;
+    const canid_t shift = MCBA_CAN_EID16_EID17_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_snd_rtr, eid_eid8_eid15)
+{
+    const canid_t start = 1;
+    const canid_t cnt = 0xff;
+    const canid_t shift = MCBA_CAN_EID8_EID15_SHIFT;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+
+    EXPECT_EQ(cnt+1, writeRet.get());
+    EXPECT_EQ(cnt+1, readRet.get());
+}
+
+TEST(can_id_snd_rtr, eid_eid0_eid7)
+{
+    const canid_t start = 0;
+    const canid_t cnt = 0xff;
+    const canid_t shift = 0;
+
+    std::future<int> readRet = std::async(&canReadThreadExt, "can1", start, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
+    std::future<int> writeRet = std::async(&canWriteThreadExt, "can0", start, cnt, shift, CAN_EFF_FLAG | CAN_RTR_FLAG);
 
     EXPECT_EQ(cnt+1, writeRet.get());
     EXPECT_EQ(cnt+1, readRet.get());
@@ -439,8 +690,8 @@ TEST(stress_snd, 1on1)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet = std::async(&canReadThread, "can1");
-    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt);
+    std::future<int> readRet = std::async(&canReadThread, "can1", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet.get());
@@ -450,9 +701,9 @@ TEST(stress_snd, 1on2)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet1 = std::async(&canReadThread, "can1");
-    std::future<int> readRet2 = std::async(&canReadThread, "can1");
-    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt);
+    std::future<int> readRet1 = std::async(&canReadThread, "can1", 0);
+    std::future<int> readRet2 = std::async(&canReadThread, "can1", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet1.get());
@@ -463,11 +714,11 @@ TEST(stress_snd, 1on4)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet1 = std::async(&canReadThread, "can1");
-    std::future<int> readRet2 = std::async(&canReadThread, "can1");
-    std::future<int> readRet3 = std::async(&canReadThread, "can1");
-    std::future<int> readRet4 = std::async(&canReadThread, "can1");
-    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt);
+    std::future<int> readRet1 = std::async(&canReadThread, "can1", 0);
+    std::future<int> readRet2 = std::async(&canReadThread, "can1", 0);
+    std::future<int> readRet3 = std::async(&canReadThread, "can1", 0);
+    std::future<int> readRet4 = std::async(&canReadThread, "can1", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can0", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet1.get());
@@ -481,8 +732,8 @@ TEST(stress_snd, 2on1)
     const int testCnt = 0x7ff;
 
     std::future<int> readRet = std::async(&canReadThreadNoId, "can1");
-    std::future<int> writeRet1 = std::async(&canWriteThread, "can0", testCnt);
-    std::future<int> writeRet2 = std::async(&canWriteThread, "can0", testCnt);
+    std::future<int> writeRet1 = std::async(&canWriteThread, "can0", testCnt, 0);
+    std::future<int> writeRet2 = std::async(&canWriteThread, "can0", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet1.get());
     EXPECT_EQ(testCnt+1, writeRet2.get());
@@ -494,10 +745,10 @@ TEST(stress_snd, 4on1)
     const int testCnt = 0x7ff;
 
     std::future<int> readRet = std::async(&canReadThreadNoId, "can1");
-    std::future<int> writeRet1 = std::async(&canWriteThread, "can0", testCnt);
-    std::future<int> writeRet2 = std::async(&canWriteThread, "can0", testCnt);
-    std::future<int> writeRet3 = std::async(&canWriteThread, "can0", testCnt);
-    std::future<int> writeRet4 = std::async(&canWriteThread, "can0", testCnt);
+    std::future<int> writeRet1 = std::async(&canWriteThread, "can0", testCnt, 0);
+    std::future<int> writeRet2 = std::async(&canWriteThread, "can0", testCnt, 0);
+    std::future<int> writeRet3 = std::async(&canWriteThread, "can0", testCnt, 0);
+    std::future<int> writeRet4 = std::async(&canWriteThread, "can0", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet1.get());
     EXPECT_EQ(testCnt+1, writeRet2.get());
@@ -510,8 +761,8 @@ TEST(stress_rcv, 1on1)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet = std::async(&canReadThread, "can0");
-    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt);
+    std::future<int> readRet = std::async(&canReadThread, "can0", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet.get());
@@ -521,9 +772,9 @@ TEST(stress_rcv, 1on2)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet1 = std::async(&canReadThread, "can0");
-    std::future<int> readRet2 = std::async(&canReadThread, "can0");
-    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt);
+    std::future<int> readRet1 = std::async(&canReadThread, "can0", 0);
+    std::future<int> readRet2 = std::async(&canReadThread, "can0", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet1.get());
@@ -534,11 +785,11 @@ TEST(stress_rcv, 1on4)
 {
     const int testCnt = 0x7ff;
 
-    std::future<int> readRet1 = std::async(&canReadThread, "can0");
-    std::future<int> readRet2 = std::async(&canReadThread, "can0");
-    std::future<int> readRet3 = std::async(&canReadThread, "can0");
-    std::future<int> readRet4 = std::async(&canReadThread, "can0");
-    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt);
+    std::future<int> readRet1 = std::async(&canReadThread, "can0", 0);
+    std::future<int> readRet2 = std::async(&canReadThread, "can0", 0);
+    std::future<int> readRet3 = std::async(&canReadThread, "can0", 0);
+    std::future<int> readRet4 = std::async(&canReadThread, "can0", 0);
+    std::future<int> writeRet = std::async(&canWriteThread, "can1", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet.get());
     EXPECT_EQ(testCnt+1, readRet1.get());
@@ -552,8 +803,8 @@ TEST(stress_rcv, 2on1)
     const int testCnt = 0x7ff;
 
     std::future<int> readRet = std::async(&canReadThreadNoId, "can0");
-    std::future<int> writeRet1 = std::async(&canWriteThread, "can1", testCnt);
-    std::future<int> writeRet2 = std::async(&canWriteThread, "can1", testCnt);
+    std::future<int> writeRet1 = std::async(&canWriteThread, "can1", testCnt, 0);
+    std::future<int> writeRet2 = std::async(&canWriteThread, "can1", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet1.get());
     EXPECT_EQ(testCnt+1, writeRet2.get());
@@ -565,10 +816,10 @@ TEST(stress_rcv, 4on1)
     const int testCnt = 0x7ff;
 
     std::future<int> readRet = std::async(&canReadThreadNoId, "can0");
-    std::future<int> writeRet1 = std::async(&canWriteThread, "can1", testCnt);
-    std::future<int> writeRet2 = std::async(&canWriteThread, "can1", testCnt);
-    std::future<int> writeRet3 = std::async(&canWriteThread, "can1", testCnt);
-    std::future<int> writeRet4 = std::async(&canWriteThread, "can1", testCnt);
+    std::future<int> writeRet1 = std::async(&canWriteThread, "can1", testCnt, 0);
+    std::future<int> writeRet2 = std::async(&canWriteThread, "can1", testCnt, 0);
+    std::future<int> writeRet3 = std::async(&canWriteThread, "can1", testCnt, 0);
+    std::future<int> writeRet4 = std::async(&canWriteThread, "can1", testCnt, 0);
 
     EXPECT_EQ(testCnt+1, writeRet1.get());
     EXPECT_EQ(testCnt+1, writeRet2.get());
@@ -691,104 +942,6 @@ TEST(data_rcv, data)
 
     close(canFdSnd);
     close(canFdRcv);
-}
-
-TEST(canIDConvertion, standardId)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
-
-    for(uint32_t i = 1; i < 2048; ++i)
-    {
-        cf.can_id = i;
-
-        usb_msg.sidl = MCBA_SET_S_SIDL(cf.can_id);
-        usb_msg.sidh = MCBA_SET_S_SIDH(cf.can_id);
-        usb_msg.eidl = 0;
-        usb_msg.eidh = 0;
-
-        canIdConverted = MCBA_CAN_GET_SID((&usb_msg));
-
-        EXPECT_EQ(cf.can_id, canIdConverted);
-    }
-}
-
-TEST(canIDConvertion, standardIdRTR)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
-
-    for(uint32_t i = 1; i < 2048; ++i)
-    {
-        cf.can_id = i | MCBA_CAN_RTR_MASK;
-
-        usb_msg.sidl = MCBA_SET_S_SIDL(cf.can_id);
-        usb_msg.sidh = MCBA_SET_S_SIDH(cf.can_id);
-        usb_msg.eidl = 0;
-        usb_msg.eidh = 0;
-        usb_msg.dlc = MCBA_DLC_RTR_MASK;
-
-        canIdConverted = MCBA_CAN_GET_SID((&usb_msg));
-
-        if(MCBA_RX_IS_RTR((&usb_msg)))
-            canIdConverted |= MCBA_CAN_RTR_MASK;
-
-        EXPECT_EQ(cf.can_id, canIdConverted);
-    }
-}
-
-TEST(canIDConvertion, extendedId)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
-
-    for(uint32_t i = 1; i < 0x20000000; ++i)
-    {
-        cf.can_id = i | MCBA_CAN_EXID_MASK;
-
-        usb_msg.sidl = MCBA_SET_E_SIDL(cf.can_id);
-        usb_msg.sidh = MCBA_SET_E_SIDH(cf.can_id);
-        usb_msg.eidl = MCBA_SET_EIDL(cf.can_id);
-        usb_msg.eidh = MCBA_SET_EIDH(cf.can_id);
-
-        canIdConverted = MCBA_CAN_GET_EID((&usb_msg));
-
-        if(MCBA_RX_IS_EXID((&usb_msg)))
-            canIdConverted |= MCBA_CAN_EXID_MASK;
-
-        EXPECT_EQ(cf.can_id, canIdConverted);
-    }
-}
-
-TEST(canIDConvertion, extendedIdRTR)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
-
-    for(uint32_t i = 1; i < 0x20000000; ++i)
-    {
-        cf.can_id = i | MCBA_CAN_RTR_MASK | MCBA_CAN_EXID_MASK;
-
-        usb_msg.sidl = MCBA_SET_E_SIDL(cf.can_id);
-        usb_msg.sidh = MCBA_SET_E_SIDH(cf.can_id);
-        usb_msg.eidl = MCBA_SET_EIDL(cf.can_id);
-        usb_msg.eidh = MCBA_SET_EIDH(cf.can_id);
-        usb_msg.dlc = MCBA_DLC_RTR_MASK;
-
-        canIdConverted = MCBA_CAN_GET_EID((&usb_msg));
-
-        if(MCBA_RX_IS_EXID((&usb_msg)))
-            canIdConverted |= MCBA_CAN_EXID_MASK;
-
-        if(MCBA_RX_IS_RTR((&usb_msg)))
-            canIdConverted |= MCBA_CAN_RTR_MASK;
-
-        EXPECT_EQ(cf.can_id, canIdConverted);
-    }
 }
 
 TEST(Configuration, SpeedSettings)
