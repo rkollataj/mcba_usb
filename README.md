@@ -6,9 +6,6 @@ The CAN BUS Analyzer Tool is a simple to use low cost CAN bus monitor which can 
 
 Originally the tool is supported on Windows environment only. This project adds support for the tool to Linux Kernel (SocketCAN). 
 
-## Current status
-The work on the driver is ongoing. Basic functionality like configuration, sending and receiving CAN frames. Shall work already.
-
 ## Usage
 ### Building and installing
 ```
@@ -71,3 +68,10 @@ To disable termination:
 echo 0 > /sys/class/net/can0/termination
 ```
 Termination values are stored in device's EEPROM (no need to set it again after device reconnection).
+
+## Known issues
+Official Microchip CAN BUS Analyzer firmware v2.3 contains bugs:
+* Too low SPI sychro time (PIC_USB->PIC_CAN) causes CAN frame to be lost
+* Sending remote frames do not work
+
+Above issues are fixed in: https://github.com/rkollataj/mcba_firmware
