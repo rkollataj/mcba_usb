@@ -141,7 +141,7 @@ MCBA_SIDL_EXID_MASK)
 (((usb_msg->sidh << MCBA_CAN_E_SID3_SID10_SHIFT) |\
 ((usb_msg->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) \
 << MCBA_CAN_E_SID0_SID2_SHIFT) |\
-((usb_msg->sidl & MCBA_SIDL_EID16_EID17_MASK) << MCBA_CAN_EID16_EID17_SHIFT)|\
+((usb_msg->sidl & MCBA_SIDL_EID16_EID17_MASK) << MCBA_CAN_EID16_EID17_SHIFT) |\
 (usb_msg->eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
 usb_msg->eidl |\
 MCBA_CAN_EXID_MASK)
@@ -178,7 +178,7 @@ struct mcba_priv {
 
 /* command frame */
 struct __packed mcba_usb_msg_can {
-	u8 cmdId;
+	u8 cmd_id;
 	u8 eidh;
 	u8 eidl;
 	u8 sidh;
@@ -191,11 +191,11 @@ struct __packed mcba_usb_msg_can {
 
 /* command frame */
 struct __packed mcba_usb_msg {
-	u8 cmdId;
+	u8 cmd_id;
 	u8 unused[18];
 };
 
-struct __packed mcba_usb_msg_keep_alive_usb {
+struct __packed mcba_usb_msg_ka_usb {
 	u8 cmd_id;
 	u8 termination_state;
 	u8 soft_ver_major;
@@ -203,7 +203,7 @@ struct __packed mcba_usb_msg_keep_alive_usb {
 	u8 unused[15];
 };
 
-struct __packed mcba_usb_msg_keep_alive_can {
+struct __packed mcba_usb_msg_ka_can {
 	u8 cmd_id;
 	u8 tx_err_cnt;
 	u8 rx_err_cnt;
@@ -230,13 +230,13 @@ struct __packed mcba_usb_msg_change_bitrate {
 };
 
 struct __packed mcba_usb_msg_terminaton {
-	u8 cmdId;
+	u8 cmd_id;
 	u8 termination;
 	u8 unused[17];
 };
 
 struct __packed mcba_usb_msg_fw_ver {
-	u8 cmdId;
+	u8 cmd_id;
 	u8 pic;
 	u8 unused[17];
 };

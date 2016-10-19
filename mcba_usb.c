@@ -82,7 +82,6 @@ static ssize_t termination_store(struct device *dev,
 	return count;
 }
 
-
 static struct device_attribute termination_attr = {
 	.attr = {
 		.name = "termination",
@@ -119,8 +118,8 @@ static void mcba_usb_process_can(struct mcba_priv *priv,
 	netif_rx(skb);
 }
 
-static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv,
-					struct mcba_usb_msg_keep_alive_usb *msg)
+static void mcba_usb_process_ka_usb(struct mcba_priv *priv,
+				    struct mcba_usb_msg_ka_usb *msg)
 {
 	if (MCBA_IS_USB_DEBUG()) {
 		netdev_info(priv->netdev,
@@ -130,8 +129,7 @@ static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv,
 	}
 
 	if ((priv->pic_usb_sw_ver_major == MCBA_VER_UNDEFINED) &&
-	   (priv->pic_usb_sw_ver_minor == MCBA_VER_UNDEFINED)) {
-
+	    (priv->pic_usb_sw_ver_minor == MCBA_VER_UNDEFINED)) {
 		netdev_info(priv->netdev,
 			    "PIC USB version %hhu.%hhu\n",
 			    msg->soft_ver_major, msg->soft_ver_minor);
@@ -142,8 +140,8 @@ static void mcba_usb_process_keep_alive_usb(struct mcba_priv *priv,
 	priv->termination_state = msg->termination_state;
 }
 
-static void mcba_usb_process_keep_alive_can(struct mcba_priv *priv,
-					struct mcba_usb_msg_keep_alive_can *msg)
+static void mcba_usb_process_ka_can(struct mcba_priv *priv,
+				    struct mcba_usb_msg_ka_can *msg)
 {
 	if (MCBA_IS_CAN_DEBUG()) {
 		netdev_info(priv->netdev,
@@ -159,8 +157,7 @@ static void mcba_usb_process_keep_alive_can(struct mcba_priv *priv,
 	}
 
 	if ((priv->pic_can_sw_ver_major == MCBA_VER_UNDEFINED) &&
-	   (priv->pic_can_sw_ver_minor == MCBA_VER_UNDEFINED)) {
-
+	    (priv->pic_can_sw_ver_minor == MCBA_VER_UNDEFINED)) {
 		netdev_info(priv->netdev,
 			    "PIC CAN version %hhu.%hhu\n",
 			    msg->soft_ver_major, msg->soft_ver_minor);
@@ -176,15 +173,15 @@ static void mcba_usb_process_keep_alive_can(struct mcba_priv *priv,
 static void mcba_usb_process_rx(struct mcba_priv *priv,
 				struct mcba_usb_msg *msg)
 {
-	switch (msg->cmdId) {
+	switch (msg->cmd_id) {
 	case MBCA_CMD_I_AM_ALIVE_FROM_CAN:
-		mcba_usb_process_keep_alive_can(priv,
-				(struct mcba_usb_msg_keep_alive_can *)msg);
+		mcba_usb_process_ka_can(priv,
+					(struct mcba_usb_msg_ka_can *)msg);
 		break;
 
 	case MBCA_CMD_I_AM_ALIVE_FROM_USB:
-		mcba_usb_process_keep_alive_usb(priv,
-				(struct mcba_usb_msg_keep_alive_usb *)msg);
+		mcba_usb_process_ka_usb(priv,
+					(struct mcba_usb_msg_ka_usb *)msg);
 		break;
 
 	case MBCA_CMD_RECEIVE_MESSAGE:
@@ -193,8 +190,8 @@ static void mcba_usb_process_rx(struct mcba_priv *priv,
 
 	case MBCA_CMD_NOTHING_TO_SEND:
 		/* Side effect of communication between PIC_USB and PIC_CAN.
-	 * PIC_CAN is telling us that it has nothing to send
-	*/
+		* PIC_CAN is telling us that it has nothing to send
+		*/
 		break;
 
 	case MBCA_CMD_TRANSMIT_MESSAGE_RSP:
@@ -203,11 +200,10 @@ static void mcba_usb_process_rx(struct mcba_priv *priv,
 
 	default:
 		netdev_warn(priv->netdev, "Unsupported msg (0x%hhX)",
-			    msg->cmdId);
+			    msg->cmd_id);
 		break;
 	}
 }
-
 
 /* Callback for reading data from device
  *
@@ -338,8 +334,6 @@ static int mcba_usb_start(struct mcba_priv *priv)
 	return err;
 }
 
-
-
 static inline void mcba_init_ctx(struct mcba_priv *priv)
 {
 	int i = 0;
@@ -347,7 +341,6 @@ static inline void mcba_init_ctx(struct mcba_priv *priv)
 	for (i = 0; i < MCBA_MAX_TX_URBS; i++)
 		priv->tx_context[i].ndx = MCBA_CTX_FREE;
 }
-
 
 static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
 {
@@ -366,7 +359,6 @@ static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
 	return ctx;
 }
 
-
 static inline void mcba_usb_free_ctx(struct mcba_usb_ctx *ctx)
 {
 	ctx->ndx = MCBA_CTX_FREE;
@@ -380,7 +372,7 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
 	struct mcba_usb_ctx *ctx = urb->context;
 	struct net_device *netdev;
 
-	BUG_ON(!ctx);
+	WARN_ON(!ctx);
 
 	netdev = ctx->priv->netdev;
 
@@ -413,10 +405,10 @@ static netdev_tx_t mcba_usb_start_xmit(struct sk_buff *skb,
 				       struct net_device *netdev)
 {
 	struct mcba_priv *priv = netdev_priv(netdev);
-	struct can_frame *cf = (struct can_frame *) skb->data;
+	struct can_frame *cf = (struct can_frame *)skb->data;
 	struct mcba_usb_msg_can usb_msg;
 
-	usb_msg.cmdId = MBCA_CMD_TRANSMIT_MESSAGE_EV;
+	usb_msg.cmd_id = MBCA_CMD_TRANSMIT_MESSAGE_EV;
 	memcpy(usb_msg.data, cf->data, sizeof(usb_msg.data));
 
 	if (MCBA_TX_IS_EXID(cf)) {
@@ -545,7 +537,7 @@ static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic)
 {
 	struct mcba_usb_msg_fw_ver usb_msg;
 
-	usb_msg.cmdId = MBCA_CMD_READ_FW_VERSION;
+	usb_msg.cmd_id = MBCA_CMD_READ_FW_VERSION;
 	usb_msg.pic = pic;
 
 	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
@@ -555,7 +547,7 @@ static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination)
 {
 	struct mcba_usb_msg_terminaton usb_msg;
 
-	usb_msg.cmdId = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
+	usb_msg.cmd_id = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
 	usb_msg.termination = termination;
 
 	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
@@ -641,16 +633,16 @@ static void mcba_net_calc_bittiming(u32 sjw, u32 prop, u32 seg1,
 	bt->phase_seg2 = seg2;
 	bt->brp = brp;
 	/* nanoseconds expected */
-	bt->tq = (bt->brp * 1000)/(MCBA_CAN_CLOCK/1000000);
-	bt->bitrate = 1000000000/((bt->sjw + bt->prop_seg +
-				   bt->phase_seg1 + bt->phase_seg2)*bt->tq);
-	bt->sample_point = ((bt->sjw + bt->prop_seg + bt->phase_seg1)*1000) /
+	bt->tq = (bt->brp * 1000) / (MCBA_CAN_CLOCK / 1000000);
+	bt->bitrate = 1000000000 / ((bt->sjw + bt->prop_seg +
+				   bt->phase_seg1 + bt->phase_seg2) * bt->tq);
+	bt->sample_point = ((bt->sjw + bt->prop_seg + bt->phase_seg1) * 1000) /
 			   (bt->sjw + bt->prop_seg + bt->phase_seg1 +
 			    bt->phase_seg2);
 }
 
 /* Microchip CANBUS has hardcoded bittiming values by default.
- * This fucntion sends request via USB to change the speed and align bittiming
+ * This function sends request via USB to change the speed and align bittiming
  * values for presentation purposes only
  */
 static int mcba_net_set_bittiming(struct net_device *netdev)
