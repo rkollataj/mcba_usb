@@ -18,7 +18,7 @@ struct can_priv{};
 struct usb_anchor{};
 struct can_berr_counter{};
 
-#include "../mcba_usb.h"
+#include "mcba_usb.h"
 
 int openCANSocket(const char *canName)
 {
