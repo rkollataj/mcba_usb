@@ -92,43 +92,44 @@
 #define MCBA_CAN_EXID_MASK           0x80000000
 
 #define MCBA_SET_S_SIDL(can_id)\
-((can_id & MCBA_CAN_S_SID0_SID2_MASK) << MCBA_SIDL_SID0_SID2_SHIFT)
+(((can_id) & MCBA_CAN_S_SID0_SID2_MASK) << MCBA_SIDL_SID0_SID2_SHIFT)
 
 #define MCBA_SET_E_SIDL(can_id)\
-((((can_id & MCBA_CAN_E_SID0_SID2_MASK) >> MCBA_CAN_E_SID0_SID2_SHIFT)\
+(((((can_id) & MCBA_CAN_E_SID0_SID2_MASK) >> MCBA_CAN_E_SID0_SID2_SHIFT)\
 << MCBA_SIDL_SID0_SID2_SHIFT) |\
-((can_id & MCBA_CAN_EID16_EID17_MASK) >> MCBA_CAN_EID16_EID17_SHIFT) |\
+(((can_id) & MCBA_CAN_EID16_EID17_MASK) >> MCBA_CAN_EID16_EID17_SHIFT) |\
 MCBA_SIDL_EXID_MASK)
 
 #define MCBA_SET_S_SIDH(can_id)\
-((can_id & MCBA_CAN_S_SID3_SID10_MASK) >> MCBA_CAN_S_SID3_SID10_SHIFT)
+(((can_id) & MCBA_CAN_S_SID3_SID10_MASK) >> MCBA_CAN_S_SID3_SID10_SHIFT)
 
 #define MCBA_SET_E_SIDH(can_id)\
-((can_id & MCBA_CAN_E_SID3_SID10_MASK) >> MCBA_CAN_E_SID3_SID10_SHIFT)
+(((can_id) & MCBA_CAN_E_SID3_SID10_MASK) >> MCBA_CAN_E_SID3_SID10_SHIFT)
 
 #define MCBA_SET_EIDL(can_id)\
-(can_id & MCBA_CAN_EID0_EID7_MASK)
+((can_id) & MCBA_CAN_EID0_EID7_MASK)
 
 #define MCBA_SET_EIDH(can_id)\
-((can_id & MCBA_CAN_EID8_EID15_MASK) >> MCBA_CAN_EID8_EID15_SHIFT)
+(((can_id) & MCBA_CAN_EID8_EID15_MASK) >> MCBA_CAN_EID8_EID15_SHIFT)
 
 #define MCBA_CAN_GET_SID(usb_msg)\
-(((usb_msg->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) |\
-(usb_msg->sidh << MCBA_CAN_S_SID3_SID10_SHIFT))
+((((usb_msg)->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) |\
+((usb_msg)->sidh << MCBA_CAN_S_SID3_SID10_SHIFT))
 
 #define MCBA_CAN_GET_EID(usb_msg)\
-(((usb_msg->sidh << MCBA_CAN_E_SID3_SID10_SHIFT) |\
-((usb_msg->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) \
+((((usb_msg)->sidh << MCBA_CAN_E_SID3_SID10_SHIFT) |\
+(((usb_msg)->sidl & MCBA_SIDL_SID0_SID2_MASK) >> MCBA_SIDL_SID0_SID2_SHIFT) \
 << MCBA_CAN_E_SID0_SID2_SHIFT) |\
-((usb_msg->sidl & MCBA_SIDL_EID16_EID17_MASK) << MCBA_CAN_EID16_EID17_SHIFT) |\
-(usb_msg->eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
-usb_msg->eidl |\
+(((usb_msg)->sidl & MCBA_SIDL_EID16_EID17_MASK) \
+<< MCBA_CAN_EID16_EID17_SHIFT) |\
+((usb_msg)->eidh << MCBA_CAN_EID8_EID15_SHIFT) |\
+(usb_msg)->eidl |\
 MCBA_CAN_EXID_MASK)
 
-#define MCBA_RX_IS_EXID(usb_msg)    (usb_msg->sidl & MCBA_SIDL_EXID_MASK)
-#define MCBA_RX_IS_RTR(usb_msg)     (usb_msg->dlc & MCBA_DLC_RTR_MASK)
-#define MCBA_TX_IS_EXID(can_frame)  (can_frame->can_id & MCBA_CAN_EXID_MASK)
-#define MCBA_TX_IS_RTR(can_frame)   (can_frame->can_id & MCBA_CAN_RTR_MASK)
+#define MCBA_RX_IS_EXID(usb_msg)    ((usb_msg)->sidl & MCBA_SIDL_EXID_MASK)
+#define MCBA_RX_IS_RTR(usb_msg)     ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
+#define MCBA_TX_IS_EXID(can_frame)  ((can_frame)->can_id & MCBA_CAN_EXID_MASK)
+#define MCBA_TX_IS_RTR(can_frame)   ((can_frame)->can_id & MCBA_CAN_RTR_MASK)
 
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
@@ -631,8 +632,8 @@ static void mcba_usb_process_rx(struct mcba_priv *priv,
 
 	case MBCA_CMD_NOTHING_TO_SEND:
 		/* Side effect of communication between PIC_USB and PIC_CAN.
-		* PIC_CAN is telling us that it has nothing to send
-		*/
+		 * PIC_CAN is telling us that it has nothing to send
+		 */
 		break;
 
 	case MBCA_CMD_TRANSMIT_MESSAGE_RSP:
