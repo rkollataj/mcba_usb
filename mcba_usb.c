@@ -17,8 +17,15 @@
  * This driver is inspired by the 4.6.2 version of net/can/usb/usb_8dev.c
  */
 
+#include <linux/signal.h>
+#include <linux/slab.h>
+#include <linux/module.h>
+#include <linux/netdevice.h>
 #include <linux/usb.h>
+
+#include <linux/can.h>
 #include <linux/can/dev.h>
+#include <linux/can/error.h>
 
 /* vendor and product id */
 #define MCBA_MODULE_NAME         "mcba_usb"
