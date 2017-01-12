@@ -1091,9 +1091,6 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
 	priv->can.do_set_bittiming = mcba_net_set_bittiming;
-	priv->can.ctrlmode_supported = CAN_CTRLMODE_LOOPBACK |
-			CAN_CTRLMODE_LISTENONLY |
-			CAN_CTRLMODE_ONE_SHOT;
 
 	netdev->netdev_ops = &mcba_netdev_ops;
 
