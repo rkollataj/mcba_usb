@@ -18,7 +18,138 @@ struct can_priv{};
 struct usb_anchor{};
 struct can_berr_counter{};
 
-#include "mcba_usb.h"
+/*
+ * COPIED FROM mcba_usb.c start
+ */
+#define MCBA_CAN_S_SID0_SID2_MASK 0x7
+#define MCBA_CAN_S_SID3_SID10_MASK 0x7F8
+#define MCBA_CAN_S_SID3_SID10_SHIFT 3
+
+#define MCBA_CAN_EID0_EID7_MASK 0xff
+#define MCBA_CAN_EID8_EID15_MASK 0xff00
+#define MCBA_CAN_EID16_EID17_MASK 0x30000
+#define MCBA_CAN_E_SID0_SID2_MASK 0x1c0000
+#define MCBA_CAN_E_SID3_SID10_MASK 0x1fe00000
+#define MCBA_CAN_EID8_EID15_SHIFT 8
+#define MCBA_CAN_EID16_EID17_SHIFT 16
+#define MCBA_CAN_E_SID0_SID2_SHIFT 18
+#define MCBA_CAN_E_SID3_SID10_SHIFT 21
+
+#define MCBA_SIDL_SID0_SID2_MASK 0xe0
+#define MCBA_SIDL_EXID_MASK 0x8
+#define MCBA_SIDL_EID16_EID17_MASK 0x3
+#define MCBA_SIDL_SID0_SID2_SHIFT 5
+
+#define MCBA_DLC_MASK 0xf
+#define MCBA_DLC_RTR_MASK 0x40
+
+#define MCBA_USB_IS_EXID(usb_msg) ((usb_msg)->sidl & MCBA_SIDL_EXID_MASK)
+#define MCBA_USB_IS_RTR(usb_msg) ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
+#define MCBA_CAN_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
+#define MCBA_CAN_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
+
+#define get_can_dlc(dlc) dlc
+
+struct __packed mcba_usb_msg_can {
+	u8 cmd_id;
+	u8 eidh;
+	u8 eidl;
+	u8 sidh;
+	u8 sidl;
+	u8 dlc;
+	u8 data[8];
+	u8 timestamp[4];
+	u8 checksum;
+};
+
+static inline void convert_usb2can_msg(const struct mcba_usb_msg_can *in,
+			               struct can_frame *out) {
+	u32 tmp;
+
+	if (MCBA_USB_IS_EXID(in)) {
+		out->can_id = in->eidl;
+
+		tmp = in->eidh;
+		tmp <<= MCBA_CAN_EID8_EID15_SHIFT;
+		out->can_id |= tmp;
+
+		tmp = in->sidl & MCBA_SIDL_EID16_EID17_MASK;
+		tmp <<= MCBA_CAN_EID16_EID17_SHIFT;
+		out->can_id |= tmp;
+
+		tmp = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
+		tmp <<= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
+		out->can_id |= tmp;
+
+		tmp = in->sidh;
+		tmp <<= MCBA_CAN_E_SID3_SID10_SHIFT;
+		out->can_id |= tmp;
+
+		out->can_id |= CAN_EFF_FLAG;
+	} else {
+		out->can_id = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
+		out->can_id >>= MCBA_SIDL_SID0_SID2_SHIFT;
+
+		tmp = in->sidh;
+		tmp <<= MCBA_CAN_S_SID3_SID10_SHIFT;
+		out->can_id |= tmp;
+	}
+
+	if (MCBA_USB_IS_RTR(in))
+		out->can_id |= CAN_RTR_FLAG;
+
+	out->can_dlc = get_can_dlc(in->dlc & MCBA_DLC_MASK);
+
+	memcpy(out->data, in->data, out->can_dlc);
+}
+
+static inline void convert_can2usb_msg(const struct can_frame *in, 
+				       struct mcba_usb_msg_can *out) {
+	u32 tmp;
+
+	if (MCBA_CAN_IS_EXID(in)) {
+		out->sidl = MCBA_SIDL_EXID_MASK;
+
+		tmp = in->can_id & MCBA_CAN_E_SID0_SID2_MASK;
+		tmp >>= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
+		out->sidl |= tmp;
+
+		tmp = in->can_id & MCBA_CAN_EID16_EID17_MASK;
+		tmp >>= MCBA_CAN_EID16_EID17_SHIFT;
+		out->sidl |= tmp;
+
+		tmp = in->can_id & MCBA_CAN_E_SID3_SID10_MASK;
+		tmp >>= MCBA_CAN_E_SID3_SID10_SHIFT;
+		out->sidh = tmp;
+
+		out->eidl = in->can_id & MCBA_CAN_EID0_EID7_MASK;
+
+		tmp = in->can_id & MCBA_CAN_EID8_EID15_MASK;
+		tmp >>= MCBA_CAN_EID8_EID15_SHIFT;
+		out->eidh = tmp;
+	} else {
+		tmp = in->can_id & MCBA_CAN_S_SID0_SID2_MASK;
+		tmp <<= MCBA_SIDL_SID0_SID2_SHIFT;
+		out->sidl = tmp;
+
+		tmp = in->can_id & MCBA_CAN_S_SID3_SID10_MASK;
+		tmp >>= MCBA_CAN_S_SID3_SID10_SHIFT;
+		out->sidh = tmp;
+
+		out->eidl = 0;
+		out->eidh = 0;
+	}
+
+	out->dlc = get_can_dlc(in->can_dlc);
+
+	memcpy(out->data, in->data, out->dlc);
+
+	if (MCBA_CAN_IS_RTR(in))
+		out->dlc |= MCBA_DLC_RTR_MASK;
+}
+/*
+ * COPIED FROM mcba_usb.c end
+ */
 
 int openCANSocket(const char *canName)
 {
@@ -286,20 +417,16 @@ TEST(canIDConvertion, standardId)
 {
     uint32_t canIdConverted = 0;
     mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
+    struct can_frame cf, cf2;
 
-    for(uint32_t i = 1; i < 2048; ++i)
+    for(uint32_t i = 0; i < 2048; ++i)
     {
-	cf.can_id = i;
+	    cf.can_id = i;
 
-	usb_msg.sidl = MCBA_SET_S_SIDL(cf.can_id);
-	usb_msg.sidh = MCBA_SET_S_SIDH(cf.can_id);
-	usb_msg.eidl = 0;
-	usb_msg.eidh = 0;
+        convert_can2usb_msg(&cf, &usb_msg);
+        convert_usb2can_msg(&usb_msg, &cf2);
 
-	canIdConverted = MCBA_CAN_GET_SID((&usb_msg));
-
-	EXPECT_EQ(cf.can_id, canIdConverted);
+    	EXPECT_EQ(cf.can_id, cf2.can_id);
     }
 }
 
@@ -307,24 +434,16 @@ TEST(canIDConvertion, standardIdRTR)
 {
     uint32_t canIdConverted = 0;
     mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
+    struct can_frame cf, cf2;
 
-    for(uint32_t i = 1; i < 2048; ++i)
+    for(uint32_t i = 0; i < 2048; ++i)
     {
-	cf.can_id = i | MCBA_CAN_RTR_MASK;
+	    cf.can_id = i | CAN_RTR_FLAG;
 
-	usb_msg.sidl = MCBA_SET_S_SIDL(cf.can_id);
-	usb_msg.sidh = MCBA_SET_S_SIDH(cf.can_id);
-	usb_msg.eidl = 0;
-	usb_msg.eidh = 0;
-	usb_msg.dlc = MCBA_DLC_RTR_MASK;
+        convert_can2usb_msg(&cf, &usb_msg);
+        convert_usb2can_msg(&usb_msg, &cf2);
 
-	canIdConverted = MCBA_CAN_GET_SID((&usb_msg));
-
-	if(MCBA_RX_IS_RTR((&usb_msg)))
-	    canIdConverted |= MCBA_CAN_RTR_MASK;
-
-	EXPECT_EQ(cf.can_id, canIdConverted);
+    	EXPECT_EQ(cf.can_id, cf2.can_id);
     }
 }
 
@@ -332,23 +451,16 @@ TEST(canIDConvertion, extendedId)
 {
     uint32_t canIdConverted = 0;
     mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
+    struct can_frame cf, cf2;
 
-    for(uint32_t i = 1; i < 0x20000000; ++i)
+    for(uint32_t i = 0; i < 0x20000000; ++i)
     {
-	cf.can_id = i | MCBA_CAN_EXID_MASK;
+	    cf.can_id = i | CAN_EFF_FLAG;
 
-	usb_msg.sidl = MCBA_SET_E_SIDL(cf.can_id);
-	usb_msg.sidh = MCBA_SET_E_SIDH(cf.can_id);
-	usb_msg.eidl = MCBA_SET_EIDL(cf.can_id);
-	usb_msg.eidh = MCBA_SET_EIDH(cf.can_id);
+        convert_can2usb_msg(&cf, &usb_msg);
+        convert_usb2can_msg(&usb_msg, &cf2);
 
-	canIdConverted = MCBA_CAN_GET_EID((&usb_msg));
-
-	if(MCBA_RX_IS_EXID((&usb_msg)))
-	    canIdConverted |= MCBA_CAN_EXID_MASK;
-
-	EXPECT_EQ(cf.can_id, canIdConverted);
+    	EXPECT_EQ(cf.can_id, cf2.can_id);
     }
 }
 
@@ -356,27 +468,16 @@ TEST(canIDConvertion, extendedIdRTR)
 {
     uint32_t canIdConverted = 0;
     mcba_usb_msg_can usb_msg;
-    struct can_frame cf;
+    struct can_frame cf, cf2;
 
-    for(uint32_t i = 1; i < 0x20000000; ++i)
+    for(uint32_t i = 0; i < 0x20000000; ++i)
     {
-	cf.can_id = i | MCBA_CAN_RTR_MASK | MCBA_CAN_EXID_MASK;
+	    cf.can_id = i | CAN_EFF_FLAG | CAN_RTR_FLAG;
 
-	usb_msg.sidl = MCBA_SET_E_SIDL(cf.can_id);
-	usb_msg.sidh = MCBA_SET_E_SIDH(cf.can_id);
-	usb_msg.eidl = MCBA_SET_EIDL(cf.can_id);
-	usb_msg.eidh = MCBA_SET_EIDH(cf.can_id);
-	usb_msg.dlc = MCBA_DLC_RTR_MASK;
+        convert_can2usb_msg(&cf, &usb_msg);
+        convert_usb2can_msg(&usb_msg, &cf2);
 
-	canIdConverted = MCBA_CAN_GET_EID((&usb_msg));
-
-	if(MCBA_RX_IS_EXID((&usb_msg)))
-	    canIdConverted |= MCBA_CAN_EXID_MASK;
-
-	if(MCBA_RX_IS_RTR((&usb_msg)))
-	    canIdConverted |= MCBA_CAN_RTR_MASK;
-
-	EXPECT_EQ(cf.can_id, canIdConverted);
+    	EXPECT_EQ(cf.can_id, cf2.can_id);
     }
 }
 
