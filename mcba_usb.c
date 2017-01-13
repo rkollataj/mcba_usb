@@ -63,6 +63,7 @@
 #define MBCA_CMD_READ_FW_VERSION 0xA9
 #define MBCA_CMD_NOTHING_TO_SEND 0xFF
 #define MBCA_CMD_TRANSMIT_MESSAGE_RSP 0xE2
+#define MCBA_CMD_CHANGE_CAN_MODE 0xAB
 
 #define MCBA_VER_REQ_USB 1
 #define MCBA_VER_REQ_CAN 2
@@ -93,6 +94,10 @@
 #define MCBA_USB_IS_RTR(usb_msg) ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
 #define MCBA_CAN_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
 #define MCBA_CAN_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
+
+#define MCBA_CAN_MODE_CONFIG 1
+#define MCBA_CAN_MODE_NORMAL 2
+#define MCBA_CAN_MODE_LISTENONLY 3
 
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
@@ -176,6 +181,12 @@ struct __packed mcba_usb_msg_terminaton {
 struct __packed mcba_usb_msg_fw_ver {
 	u8 cmd_id;
 	u8 pic;
+	u8 unused[17];
+};
+
+struct __packed mcba_usb_msg_can_mode {
+	u8 cmd_id;
+	u8 mode;
 	u8 unused[17];
 };
 
@@ -688,6 +699,16 @@ static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination)
 }
 */
 
+static void mcba_usb_xmit_can_mode(struct mcba_priv *priv, u8 can_mode)
+{
+	struct mcba_usb_msg_can_mode usb_msg;
+
+	usb_msg.cmd_id = MCBA_CMD_CHANGE_CAN_MODE;
+	usb_msg.mode = can_mode;
+
+	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
+}
+
 static inline void convert_usb2can_msg(const struct mcba_usb_msg_can *in,
 			               struct can_frame *out) {
 	u32 tmp;
@@ -945,6 +966,12 @@ static int mcba_usb_start(struct mcba_priv *priv)
 static int mcba_usb_open(struct net_device *netdev)
 {
 	int err;
+	struct mcba_priv *priv = netdev_priv(netdev);
+
+	if(priv->can.ctrlmode & CAN_CTRLMODE_LISTENONLY) 
+		mcba_usb_xmit_can_mode(priv, MCBA_CAN_MODE_LISTENONLY);
+	else
+		mcba_usb_xmit_can_mode(priv, MCBA_CAN_MODE_NORMAL);
 
 	/* common open */
 	err = open_candev(netdev);
@@ -968,6 +995,11 @@ static void mcba_urb_unlink(struct mcba_priv *priv)
 static int mcba_usb_close(struct net_device *netdev)
 {
 	struct mcba_priv *priv = netdev_priv(netdev);
+
+	/* Put device to config mode to be able to bring it up again
+	 * in NORMAL or LISTENONLY mode during open command
+	 */
+	mcba_usb_xmit_can_mode(priv, MCBA_CAN_MODE_CONFIG);
 
 	priv->can.state = CAN_STATE_STOPPED;
 
@@ -1091,6 +1123,7 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
 	priv->can.do_set_bittiming = mcba_net_set_bittiming;
+	priv->can.ctrlmode_supported = CAN_CTRLMODE_LISTENONLY;
 
 	netdev->netdev_ops = &mcba_netdev_ops;
 
