@@ -94,6 +94,9 @@
 #define MCBA_CAN_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
 #define MCBA_CAN_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
 
+#define MCBA_CAN_STATE_WRN_TH 95
+#define MCBA_CAN_STATE_ERR_PSV_TH 127
+
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
 	u32 ndx;
@@ -775,6 +778,17 @@ static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 
 	priv->bec.txerr = msg->tx_err_cnt;
 	priv->bec.rxerr = msg->rx_err_cnt;
+
+	if (msg->tx_bus_off)
+		priv->can.state = CAN_STATE_BUS_OFF;
+
+	else if ((priv->bec.txerr > MCBA_CAN_STATE_ERR_PSV_TH) ||
+		(priv->bec.rxerr > MCBA_CAN_STATE_ERR_PSV_TH))
+		priv->can.state = CAN_STATE_ERROR_PASSIVE;
+
+	else if ((priv->bec.txerr > MCBA_CAN_STATE_WRN_TH) ||
+		(priv->bec.rxerr > MCBA_CAN_STATE_WRN_TH))
+		priv->can.state = CAN_STATE_ERROR_WARNING;
 }
 
 static void mcba_usb_process_rx(struct mcba_priv *priv,
@@ -932,8 +946,6 @@ static int mcba_usb_start(struct mcba_priv *priv)
 	if (i < MCBA_MAX_RX_URBS)
 		netdev_warn(netdev, "rx performance may be slow\n");
 
-	priv->can.state = CAN_STATE_ERROR_ACTIVE;
-
 	mcba_init_ctx(priv);
 	mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_USB);
 	mcba_usb_xmit_read_fw_ver(priv, MCBA_VER_REQ_CAN);
@@ -944,12 +956,15 @@ static int mcba_usb_start(struct mcba_priv *priv)
 /* Open USB device */
 static int mcba_usb_open(struct net_device *netdev)
 {
+	struct mcba_priv *priv = netdev_priv(netdev);
 	int err;
 
 	/* common open */
 	err = open_candev(netdev);
 	if (err)
 		return err;
+
+	priv->can.state = CAN_STATE_ERROR_ACTIVE;
 
 	netif_start_queue(netdev);
 
@@ -1070,20 +1085,11 @@ static int mcba_usb_probe(struct usb_interface *intf,
 
 	usb_set_intfdata(intf, priv);
 
-	err = mcba_usb_start(priv);
-	if (err) {
-		if (err == -ENODEV)
-			netif_device_detach(priv->netdev);
-
-		netdev_warn(netdev, "couldn't start device: %d\n", err);
-
-		goto cleanup_candev;
-	}
-
 	/* Init CAN device */
 	priv->can.state = CAN_STATE_STOPPED;
 	priv->can.clock.freq = MCBA_CAN_CLOCK;
 	priv->can.bittiming_const = &mcba_bittiming_const;
+
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
 	priv->can.do_set_bittiming = mcba_net_set_bittiming;
@@ -1097,7 +1103,21 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	err = register_candev(netdev);
 	if (err) {
 		netdev_err(netdev,
-			   "couldn't register CAN device: %d\n", err);
+			"couldn't register CAN device: %d\n", err);
+
+		netif_device_detach(priv->netdev);
+
+		goto cleanup_candev;
+	}
+
+	/* Start USB device only if we have successfuly registered CAN device */
+	err = mcba_usb_start(priv);
+	if (err) {
+		if (err == -ENODEV)
+			netif_device_detach(priv->netdev);
+
+		netdev_warn(netdev, "couldn't start device: %d\n", err);
+
 		goto cleanup_candev;
 	}
 
