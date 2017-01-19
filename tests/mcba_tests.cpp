@@ -1047,21 +1047,18 @@ TEST(data_rcv, data)
 
 TEST(Configuration, SpeedSettings)
 {
-    const int bitrateSet[] = {20000, 33333, 50000, 80000, 83333, 100000,
+    const int bitrate[] = {20000, 33333, 50000, 80000, 83333, 100000,
                              125000, 150000, 175000, 200000, 225000, 250000,
                             275000, 300000, 500000, 625000, 800000, 1000000};
 
-    const int bitrateGet[] = {20000, 33333, 50000, 80000, 83333, 100000,
-                             125000, 150375, 175438, 200000, 227272, 250000,
-                            277777, 303030, 500000, 625000, 800000, 1000000};
     char buff[100];
 
 
     for(int i = 0; i < 18; ++i)
     {
-        configureCAN("can0", bitrateSet[i]);
+        configureCAN("can0", bitrate[i]);
 
-        sprintf(buff, "sudo ip -d link show can0 | grep %d > /dev/null", bitrateGet[i]);
+        sprintf(buff, "sudo ip -d link show can0 | grep %d > /dev/null", bitrate[i]);
         EXPECT_EQ(0, system(buff));
 
         sleep(1);

@@ -17,16 +17,15 @@
  * This driver is inspired by the 4.6.2 version of net/can/usb/usb_8dev.c
  */
 
-#include <linux/signal.h>
-#include <linux/slab.h>
-#include <linux/module.h>
-#include <linux/netdevice.h>
-#include <linux/usb.h>
-
 #include <linux/can.h>
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
+#include <linux/module.h>
+#include <linux/netdevice.h>
+#include <linux/signal.h>
+#include <linux/slab.h>
 #include <linux/unaligned/be_byteshift.h>
+#include <linux/usb.h>
 
 /* vendor and product id */
 #define MCBA_MODULE_NAME "mcba_usb"
@@ -97,6 +96,9 @@
 #define MCBA_CAN_STATE_WRN_TH 95
 #define MCBA_CAN_STATE_ERR_PSV_TH 127
 
+#define MCBA_TERMINATION_DISABLED CAN_TERMINATION_DISABLED
+#define MCBA_TERMINATION_ENABLED 120
+
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
 	u32 ndx;
@@ -109,18 +111,17 @@ struct mcba_priv {
 	struct can_priv can; /* must be the first member */
 	struct sk_buff *echo_skb[MCBA_MAX_TX_URBS];
 	struct mcba_usb_ctx tx_context[MCBA_MAX_TX_URBS];
-
 	struct usb_device *udev;
 	struct net_device *netdev;
 	struct usb_anchor tx_submitted;
 	struct usb_anchor rx_submitted;
 	struct can_berr_counter bec;
-	u8 termination_state;
 	bool usb_ka_first_pass;
 	bool can_ka_first_pass;
+	bool can_speed_check;
 };
 
-/* command frame */
+/* CAN frame */
 struct __packed mcba_usb_msg_can {
 	u8 cmd_id;
 	u8 eidh;
@@ -154,7 +155,7 @@ struct __packed mcba_usb_msg_ka_can {
 	u8 rx_buff_ovfl;
 	u8 tx_bus_off;
 	u16 can_bitrate; /* BE */
-	u16 rx_lost; /* LE */
+	u16 rx_lost;     /* LE */
 	u8 can_stat;
 	u8 soft_ver_major;
 	u8 soft_ver_minor;
@@ -182,269 +183,20 @@ struct __packed mcba_usb_msg_fw_ver {
 	u8 unused[17];
 };
 
-struct bitrate_settings {
-	struct can_bittiming bt;
-	u16 kbps;
-};
-
-/* Required by can-dev but not for the sake of driver as CANBUS is USB based */
-static const struct can_bittiming_const mcba_bittiming_const = {
-	.name = "mcba_usb",
-	.tseg1_min = 1,
-	.tseg1_max = 8,
-	.tseg2_min = 1,
-	.tseg2_max = 8,
-	.sjw_max = 4,
-	.brp_min = 2,
-	.brp_max = 128,
-	.brp_inc = 2,
-};
-
-/* predefined values hardcoded in device's firmware */
-static const struct bitrate_settings br_settings[] = {
-	{
-		.bt = {
-			.bitrate = 19940,
-			.sample_point = 700,
-			.tq = 2500,
-			.prop_seg = 5,
-			.phase_seg1 = 8,
-			.phase_seg2 = 6,
-			.sjw = 1,
-			.brp = 100,
-		},
-		.kbps = 20
-	},
-	{
-		.bt = {
-			.bitrate = 33333,
-			.sample_point = 680,
-			.tq = 1200,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 48,
-		},
-		.kbps = 33
-	},
-	{
-		.bt = {
-			.bitrate = 50000,
-			.sample_point = 800,
-			.tq = 1000,
-			.prop_seg = 8,
-			.phase_seg1 = 7,
-			.phase_seg2 = 4,
-			.sjw = 1,
-			.brp = 40,
-		},
-		.kbps = 50
-	},
-	{
-		.bt = {
-			.bitrate = 80000,
-			.sample_point = 680,
-			.tq = 500,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 20,
-		},
-		.kbps = 80
-	},
-	{
-		.bt = {
-			.bitrate = 83333,
-			.sample_point = 708,
-			.tq = 500,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 7,
-			.sjw = 1,
-			.brp = 20,
-		},
-		.kbps = 83
-	},
-	{
-		.bt = {
-			.bitrate = 100000,
-			.sample_point = 700,
-			.tq = 1000,
-			.prop_seg = 1,
-			.phase_seg1 = 5,
-			.phase_seg2 = 3,
-			.sjw = 1,
-			.brp = 40,
-		},
-		.kbps = 100
-	},
-	{
-		.bt = {
-			.bitrate = 125000,
-			.sample_point = 600,
-			.tq = 400,
-			.prop_seg = 3,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 16,
-		},
-		.kbps = 125
-	},
-	{
-		.bt = {
-			.bitrate = 150375,
-			.sample_point = 789,
-			.tq = 350,
-			.prop_seg = 8,
-			.phase_seg1 = 6,
-			.phase_seg2 = 4,
-			.sjw = 1,
-			.brp = 14,
-		},
-		.kbps = 150
-	},
-
-	{
-		.bt = {
-			.bitrate = 175438,
-			.sample_point = 789,
-			.tq = 300,
-			.prop_seg = 8,
-			.phase_seg1 = 6,
-			.phase_seg2 = 4,
-			.sjw = 1,
-			.brp = 12,
-		},
-		.kbps = 175
-	},
-	{
-		.bt = {
-			.bitrate = 200000,
-			.sample_point = 680,
-			.tq = 200,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 8,
-		},
-		.kbps = 200
-	},
-	{
-		.bt = {
-			.bitrate = 227272,
-			.sample_point = 772,
-			.tq = 200,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 5,
-			.sjw = 1,
-			.brp = 8,
-		},
-		.kbps = 225
-	},
-	{
-		.bt = {
-			.bitrate = 250000,
-			.sample_point = 600,
-			.tq = 200,
-			.prop_seg = 3,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 8,
-		},
-		.kbps = 250
-	},
-	{
-		.bt = {
-			.bitrate = 277777,
-			.sample_point = 708,
-			.tq = 150,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 7,
-			.sjw = 1,
-			.brp = 6,
-		},
-		.kbps = 275
-	},
-	{
-		.bt = {
-			.bitrate = 303030,
-			.sample_point = 772,
-			.tq = 150,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 5,
-			.sjw = 1,
-			.brp = 6,
-		},
-		.kbps = 300
-	},
-	{
-		.bt = {
-			.bitrate = 500000,
-			.sample_point = 600,
-			.tq = 100,
-			.prop_seg = 3,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 4,
-		},
-		.kbps = 500
-	},
-	{
-		.bt = {
-			.bitrate = 625000,
-			.sample_point = 750,
-			.tq = 200,
-			.prop_seg = 1,
-			.phase_seg1 = 4,
-			.phase_seg2 = 2,
-			.sjw = 1,
-			.brp = 8,
-		},
-		.kbps = 625
-	},
-	{
-		.bt = {
-			.bitrate = 800000,
-			.sample_point = 680,
-			.tq = 50,
-			.prop_seg = 8,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 2,
-		},
-		.kbps = 800
-	},
-	{
-		.bt = {
-			.bitrate = 1000000,
-			.sample_point = 600,
-			.tq = 50,
-			.prop_seg = 3,
-			.phase_seg1 = 8,
-			.phase_seg2 = 8,
-			.sjw = 1,
-			.brp = 2,
-		},
-		.kbps = 1000
-	}
-};
-
 static const struct usb_device_id mcba_usb_table[] = {
 	{ USB_DEVICE(MCBA_VENDOR_ID, MCBA_PRODUCT_ID) },
-	{ } /* Terminating entry */
+	{} /* Terminating entry */
 };
 
 MODULE_DEVICE_TABLE(usb, mcba_usb_table);
+
+static const u16 mcba_termination[] = { MCBA_TERMINATION_DISABLED,
+					MCBA_TERMINATION_ENABLED };
+
+static const u32 mcba_bitrate[] = { 20000,  33333,  50000,  80000,  83333,
+				    100000, 125000, 150000, 175000, 200000,
+				    225000, 250000, 275000, 300000, 500000,
+				    625000, 800000, 1000000 };
 
 static inline void mcba_init_ctx(struct mcba_priv *priv)
 {
@@ -474,7 +226,7 @@ static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv)
 static inline void mcba_usb_free_ctx(struct mcba_usb_ctx *ctx)
 {
 	ctx->ndx = MCBA_CTX_FREE;
-	ctx->priv = 0;
+	ctx->priv = NULL;
 	ctx->dlc = 0;
 	ctx->can = false;
 }
@@ -505,8 +257,7 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
 			  urb->transfer_buffer, urb->transfer_dma);
 
 	if (urb->status)
-		netdev_info(netdev, "Tx URB aborted (%d)\n",
-			    urb->status);
+		netdev_info(netdev, "Tx URB aborted (%d)\n", urb->status);
 
 	/* Release context */
 	mcba_usb_free_ctx(ctx);
@@ -532,8 +283,8 @@ static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
 	}
 
 	if (skb) {
-		ctx->dlc = ((struct mcba_usb_msg_can *)usb_msg)->dlc
-				& MCBA_DLC_MASK;
+		ctx->dlc =
+		    ((struct mcba_usb_msg_can *)usb_msg)->dlc & MCBA_DLC_MASK;
 		can_put_echo_skb(skb, priv->netdev, ctx->ndx);
 		ctx->can = true;
 	} else {
@@ -552,10 +303,9 @@ static netdev_tx_t mcba_usb_xmit(struct mcba_priv *priv,
 
 	memcpy(buf, usb_msg, MCBA_USB_TX_BUFF_SIZE);
 
-	usb_fill_bulk_urb(urb, priv->udev,
-			  usb_sndbulkpipe(priv->udev, MCBA_USB_EP_OUT), buf,
-			  MCBA_USB_TX_BUFF_SIZE, mcba_usb_write_bulk_callback,
-			  ctx);
+	usb_fill_bulk_urb(
+	    urb, priv->udev, usb_sndbulkpipe(priv->udev, MCBA_USB_EP_OUT), buf,
+	    MCBA_USB_TX_BUFF_SIZE, mcba_usb_write_bulk_callback, ctx);
 
 	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 	usb_anchor_urb(urb, &priv->tx_submitted);
@@ -592,8 +342,9 @@ nomem:
 	return NETDEV_TX_OK;
 }
 
-static inline void convert_can2usb_msg(const struct can_frame *in, 
-				       struct mcba_usb_msg_can *out) {
+static inline void convert_can2usb_msg(const struct can_frame *in,
+				       struct mcba_usb_msg_can *out)
+{
 	u32 tmp;
 
 	if (MCBA_CAN_IS_EXID(in)) {
@@ -663,7 +414,7 @@ static void mcba_usb_xmit_change_bitrate(struct mcba_priv *priv, u16 bitrate)
 {
 	struct mcba_usb_msg_change_bitrate usb_msg;
 
-	usb_msg.cmd_id =  MBCA_CMD_CHANGE_BIT_RATE;
+	usb_msg.cmd_id = MBCA_CMD_CHANGE_BIT_RATE;
 	put_unaligned_be16(bitrate, &usb_msg.bitrate);
 
 	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
@@ -679,20 +430,9 @@ static void mcba_usb_xmit_read_fw_ver(struct mcba_priv *priv, u8 pic)
 	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 }
 
-/* To be used once termination API will be ready
-static void mcba_usb_xmit_termination(struct mcba_priv *priv, u8 termination)
-{
-	struct mcba_usb_msg_terminaton usb_msg;
-
-	usb_msg.cmd_id = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
-	usb_msg.termination = termination;
-
-	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
-}
-*/
-
 static inline void convert_usb2can_msg(const struct mcba_usb_msg_can *in,
-			               struct can_frame *out) {
+				       struct can_frame *out)
+{
 	u32 tmp;
 
 	if (MCBA_USB_IS_EXID(in)) {
@@ -755,25 +495,48 @@ static void mcba_usb_process_ka_usb(struct mcba_priv *priv,
 				    struct mcba_usb_msg_ka_usb *msg)
 {
 	if (unlikely(priv->usb_ka_first_pass)) {
-		netdev_info(priv->netdev,
-			    "PIC USB version %hhu.%hhu\n",
+		netdev_info(priv->netdev, "PIC USB version %hhu.%hhu\n",
 			    msg->soft_ver_major, msg->soft_ver_minor);
 
 		priv->usb_ka_first_pass = false;
 	}
 
-	priv->termination_state = msg->termination_state;
+	if (msg->termination_state)
+		priv->can.termination = MCBA_TERMINATION_ENABLED;
+	else
+		priv->can.termination = MCBA_TERMINATION_DISABLED;
+}
+
+static u32 convert_can2host_bitrate(struct mcba_usb_msg_ka_can *msg)
+{
+	const u32 bitrate = get_unaligned_be16(&msg->can_bitrate);
+
+	if ((bitrate == 33) || (bitrate == 83))
+		return bitrate * 1000 + 333;
+	else
+		return bitrate * 1000;
 }
 
 static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 				    struct mcba_usb_msg_ka_can *msg)
 {
 	if (unlikely(priv->can_ka_first_pass)) {
-		netdev_info(priv->netdev,
-			    "PIC CAN version %hhu.%hhu\n",
+		netdev_info(priv->netdev, "PIC CAN version %hhu.%hhu\n",
 			    msg->soft_ver_major, msg->soft_ver_minor);
 
 		priv->can_ka_first_pass = false;
+	}
+
+	if (unlikely(priv->can_speed_check)) {
+		const u32 bitrate = convert_can2host_bitrate(msg);
+
+		priv->can_speed_check = false;
+
+		if (bitrate != priv->can.bittiming.bitrate)
+			netdev_err(
+			    priv->netdev,
+			    "Wrong bitrate reported by the device (%u). Expected %u",
+			    bitrate, priv->can.bittiming.bitrate);
 	}
 
 	priv->bec.txerr = msg->tx_err_cnt;
@@ -783,11 +546,11 @@ static void mcba_usb_process_ka_can(struct mcba_priv *priv,
 		priv->can.state = CAN_STATE_BUS_OFF;
 
 	else if ((priv->bec.txerr > MCBA_CAN_STATE_ERR_PSV_TH) ||
-		(priv->bec.rxerr > MCBA_CAN_STATE_ERR_PSV_TH))
+		 (priv->bec.rxerr > MCBA_CAN_STATE_ERR_PSV_TH))
 		priv->can.state = CAN_STATE_ERROR_PASSIVE;
 
 	else if ((priv->bec.txerr > MCBA_CAN_STATE_WRN_TH) ||
-		(priv->bec.rxerr > MCBA_CAN_STATE_WRN_TH))
+		 (priv->bec.rxerr > MCBA_CAN_STATE_WRN_TH))
 		priv->can.state = CAN_STATE_ERROR_WARNING;
 }
 
@@ -851,8 +614,7 @@ static void mcba_usb_read_bulk_callback(struct urb *urb)
 		return;
 
 	default:
-		netdev_info(netdev, "Rx URB aborted (%d)\n",
-			    urb->status);
+		netdev_info(netdev, "Rx URB aborted (%d)\n", urb->status);
 
 		goto resubmit_urb;
 	}
@@ -900,14 +662,12 @@ static int mcba_usb_start(struct mcba_priv *priv)
 		/* create a URB, and a buffer for it */
 		urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!urb) {
-			netdev_err(netdev, "No memory left for URBs\n");
 			err = -ENOMEM;
 			break;
 		}
 
 		buf = usb_alloc_coherent(priv->udev, MCBA_USB_RX_BUFF_SIZE,
-					 GFP_KERNEL,
-					 &urb->transfer_dma);
+					 GFP_KERNEL, &urb->transfer_dma);
 		if (!buf) {
 			netdev_err(netdev, "No memory left for USB buffer\n");
 			usb_free_urb(urb);
@@ -916,8 +676,7 @@ static int mcba_usb_start(struct mcba_priv *priv)
 		}
 
 		usb_fill_bulk_urb(urb, priv->udev,
-				  usb_rcvbulkpipe(priv->udev,
-						  MCBA_USB_EP_IN),
+				  usb_rcvbulkpipe(priv->udev, MCBA_USB_EP_IN),
 				  buf, MCBA_USB_RX_BUFF_SIZE,
 				  mcba_usb_read_bulk_callback, priv);
 		urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
@@ -964,6 +723,7 @@ static int mcba_usb_open(struct net_device *netdev)
 	if (err)
 		return err;
 
+	priv->can_speed_check = true;
 	priv->can.state = CAN_STATE_ERROR_ACTIVE;
 
 	netif_start_queue(netdev);
@@ -1018,7 +778,7 @@ static int mcba_net_get_berr_counter(const struct net_device *netdev,
 static const struct net_device_ops mcba_netdev_ops = {
 	.ndo_open = mcba_usb_open,
 	.ndo_stop = mcba_usb_close,
-	.ndo_start_xmit = mcba_usb_start_xmit
+	.ndo_start_xmit = mcba_usb_start_xmit,
 };
 
 /* Microchip CANBUS has hardcoded bittiming values by default.
@@ -1027,32 +787,27 @@ static const struct net_device_ops mcba_netdev_ops = {
  */
 static int mcba_net_set_bittiming(struct net_device *netdev)
 {
-	u8 i;
 	struct mcba_priv *priv = netdev_priv(netdev);
-	struct can_bittiming *bt = &priv->can.bittiming;
-	const struct bitrate_settings *settings = NULL;
-	const u8 setting_cnt = sizeof(br_settings) /
-			       sizeof(struct bitrate_settings);
+	const u16 bitrate_kbps = (u16)(priv->can.bittiming.bitrate / 1000);
 
-	for (i = 0; i < setting_cnt; ++i)
-		if (br_settings[i].bt.bitrate == bt->bitrate)
-			settings = &br_settings[i];
+	mcba_usb_xmit_change_bitrate(priv, bitrate_kbps);
 
-	if (settings) {
-		memcpy(bt, &settings->bt, sizeof(struct can_bittiming));
+	return 0;
+}
 
-		/* recalculate bitrate as it may be different than default */
-		bt->bitrate = 1000000000 / ((bt->sjw + bt->prop_seg +
-					    bt->phase_seg1 + bt->phase_seg2) *
-					    bt->tq);
+static int mcba_set_termination(struct net_device *netdev, u16 term)
+{
+	struct mcba_priv *priv = netdev_priv(netdev);
+	struct mcba_usb_msg_terminaton usb_msg;
 
-		mcba_usb_xmit_change_bitrate(priv, settings->kbps);
-	} else {
-		netdev_err(netdev, "Unsupported bittrate (%u). Use one of: 20000, 33333, 50000, 80000, 83333, 100000, 125000, 150000, 175000, 200000, 225000, 250000, 275000, 300000, 500000, 625000, 800000, 1000000\n",
-			   bt->bitrate);
+	usb_msg.cmd_id = MBCA_CMD_SETUP_TERMINATION_RESISTANCE;
 
-		return -EINVAL;
-	}
+	if (term == MCBA_TERMINATION_ENABLED)
+		usb_msg.termination = 1;
+	else
+		usb_msg.termination = 0;
+
+	mcba_usb_xmit_cmd(priv, (struct mcba_usb_msg *)&usb_msg);
 
 	return 0;
 }
@@ -1079,6 +834,7 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	priv->netdev = netdev;
 	priv->usb_ka_first_pass = true;
 	priv->can_ka_first_pass = true;
+	priv->can_speed_check = false;
 
 	init_usb_anchor(&priv->rx_submitted);
 	init_usb_anchor(&priv->tx_submitted);
@@ -1088,8 +844,12 @@ static int mcba_usb_probe(struct usb_interface *intf,
 	/* Init CAN device */
 	priv->can.state = CAN_STATE_STOPPED;
 	priv->can.clock.freq = MCBA_CAN_CLOCK;
-	priv->can.bittiming_const = &mcba_bittiming_const;
+	priv->can.termination_const = mcba_termination;
+	priv->can.termination_const_cnt = ARRAY_SIZE(mcba_termination);
+	priv->can.bitrate_const = mcba_bitrate;
+	priv->can.bitrate_const_cnt = ARRAY_SIZE(mcba_bitrate);
 
+	priv->can.do_set_termination = mcba_set_termination;
 	priv->can.do_set_mode = mcba_net_set_mode;
 	priv->can.do_get_berr_counter = mcba_net_get_berr_counter;
 	priv->can.do_set_bittiming = mcba_net_set_bittiming;
@@ -1102,8 +862,7 @@ static int mcba_usb_probe(struct usb_interface *intf,
 
 	err = register_candev(netdev);
 	if (err) {
-		netdev_err(netdev,
-			"couldn't register CAN device: %d\n", err);
+		netdev_err(netdev, "couldn't register CAN device: %d\n", err);
 
 		netif_device_detach(priv->netdev);
 
@@ -1145,10 +904,10 @@ static void mcba_usb_disconnect(struct usb_interface *intf)
 }
 
 static struct usb_driver mcba_usb_driver = {
-	.name =		MCBA_MODULE_NAME,
-	.probe =	mcba_usb_probe,
-	.disconnect =	mcba_usb_disconnect,
-	.id_table =	mcba_usb_table,
+	.name = MCBA_MODULE_NAME,
+	.probe = mcba_usb_probe,
+	.disconnect = mcba_usb_disconnect,
+	.id_table = mcba_usb_table,
 };
 
 module_usb_driver(mcba_usb_driver);
