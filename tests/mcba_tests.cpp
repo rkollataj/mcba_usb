@@ -18,138 +18,10 @@ struct can_priv{};
 struct usb_anchor{};
 struct can_berr_counter{};
 
-/*
- * COPIED FROM mcba_usb.c start
- */
-#define MCBA_CAN_S_SID0_SID2_MASK 0x7
-#define MCBA_CAN_S_SID3_SID10_MASK 0x7F8
-#define MCBA_CAN_S_SID3_SID10_SHIFT 3
-
-#define MCBA_CAN_EID0_EID7_MASK 0xff
-#define MCBA_CAN_EID8_EID15_MASK 0xff00
-#define MCBA_CAN_EID16_EID17_MASK 0x30000
-#define MCBA_CAN_E_SID0_SID2_MASK 0x1c0000
-#define MCBA_CAN_E_SID3_SID10_MASK 0x1fe00000
 #define MCBA_CAN_EID8_EID15_SHIFT 8
 #define MCBA_CAN_EID16_EID17_SHIFT 16
 #define MCBA_CAN_E_SID0_SID2_SHIFT 18
 #define MCBA_CAN_E_SID3_SID10_SHIFT 21
-
-#define MCBA_SIDL_SID0_SID2_MASK 0xe0
-#define MCBA_SIDL_EXID_MASK 0x8
-#define MCBA_SIDL_EID16_EID17_MASK 0x3
-#define MCBA_SIDL_SID0_SID2_SHIFT 5
-
-#define MCBA_DLC_MASK 0xf
-#define MCBA_DLC_RTR_MASK 0x40
-
-#define MCBA_USB_IS_EXID(usb_msg) ((usb_msg)->sidl & MCBA_SIDL_EXID_MASK)
-#define MCBA_USB_IS_RTR(usb_msg) ((usb_msg)->dlc & MCBA_DLC_RTR_MASK)
-#define MCBA_CAN_IS_EXID(can_frame) ((can_frame)->can_id & CAN_EFF_FLAG)
-#define MCBA_CAN_IS_RTR(can_frame) ((can_frame)->can_id & CAN_RTR_FLAG)
-
-#define get_can_dlc(dlc) dlc
-
-struct __packed mcba_usb_msg_can {
-	u8 cmd_id;
-	u8 eidh;
-	u8 eidl;
-	u8 sidh;
-	u8 sidl;
-	u8 dlc;
-	u8 data[8];
-	u8 timestamp[4];
-	u8 checksum;
-};
-
-static inline void convert_usb2can_msg(const struct mcba_usb_msg_can *in,
-			               struct can_frame *out) {
-	u32 tmp;
-
-	if (MCBA_USB_IS_EXID(in)) {
-		out->can_id = in->eidl;
-
-		tmp = in->eidh;
-		tmp <<= MCBA_CAN_EID8_EID15_SHIFT;
-		out->can_id |= tmp;
-
-		tmp = in->sidl & MCBA_SIDL_EID16_EID17_MASK;
-		tmp <<= MCBA_CAN_EID16_EID17_SHIFT;
-		out->can_id |= tmp;
-
-		tmp = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
-		tmp <<= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
-		out->can_id |= tmp;
-
-		tmp = in->sidh;
-		tmp <<= MCBA_CAN_E_SID3_SID10_SHIFT;
-		out->can_id |= tmp;
-
-		out->can_id |= CAN_EFF_FLAG;
-	} else {
-		out->can_id = in->sidl & MCBA_SIDL_SID0_SID2_MASK;
-		out->can_id >>= MCBA_SIDL_SID0_SID2_SHIFT;
-
-		tmp = in->sidh;
-		tmp <<= MCBA_CAN_S_SID3_SID10_SHIFT;
-		out->can_id |= tmp;
-	}
-
-	if (MCBA_USB_IS_RTR(in))
-		out->can_id |= CAN_RTR_FLAG;
-
-	out->can_dlc = get_can_dlc(in->dlc & MCBA_DLC_MASK);
-
-	memcpy(out->data, in->data, out->can_dlc);
-}
-
-static inline void convert_can2usb_msg(const struct can_frame *in, 
-				       struct mcba_usb_msg_can *out) {
-	u32 tmp;
-
-	if (MCBA_CAN_IS_EXID(in)) {
-		out->sidl = MCBA_SIDL_EXID_MASK;
-
-		tmp = in->can_id & MCBA_CAN_E_SID0_SID2_MASK;
-		tmp >>= MCBA_CAN_E_SID0_SID2_SHIFT - MCBA_SIDL_SID0_SID2_SHIFT;
-		out->sidl |= tmp;
-
-		tmp = in->can_id & MCBA_CAN_EID16_EID17_MASK;
-		tmp >>= MCBA_CAN_EID16_EID17_SHIFT;
-		out->sidl |= tmp;
-
-		tmp = in->can_id & MCBA_CAN_E_SID3_SID10_MASK;
-		tmp >>= MCBA_CAN_E_SID3_SID10_SHIFT;
-		out->sidh = tmp;
-
-		out->eidl = in->can_id & MCBA_CAN_EID0_EID7_MASK;
-
-		tmp = in->can_id & MCBA_CAN_EID8_EID15_MASK;
-		tmp >>= MCBA_CAN_EID8_EID15_SHIFT;
-		out->eidh = tmp;
-	} else {
-		tmp = in->can_id & MCBA_CAN_S_SID0_SID2_MASK;
-		tmp <<= MCBA_SIDL_SID0_SID2_SHIFT;
-		out->sidl = tmp;
-
-		tmp = in->can_id & MCBA_CAN_S_SID3_SID10_MASK;
-		tmp >>= MCBA_CAN_S_SID3_SID10_SHIFT;
-		out->sidh = tmp;
-
-		out->eidl = 0;
-		out->eidh = 0;
-	}
-
-	out->dlc = get_can_dlc(in->can_dlc);
-
-	memcpy(out->data, in->data, out->dlc);
-
-	if (MCBA_CAN_IS_RTR(in))
-		out->dlc |= MCBA_DLC_RTR_MASK;
-}
-/*
- * COPIED FROM mcba_usb.c end
- */
 
 int openCANSocket(const char *canName)
 {
@@ -236,7 +108,7 @@ void configureCAN(const char *canName, int speed)
     sprintf(buff, "sudo ip link set %s type can bitrate %d", canName, speed);
     EXPECT_EQ(0, system(buff));
 
-    sprintf(buff, "sudo ip link set %s up && sleep 1", canName);
+    sprintf(buff, "sudo ip link set %s up && usleep 300000", canName);
     EXPECT_EQ(0, system(buff));
 }
 
@@ -412,74 +284,6 @@ int canWriteThreadExt(const char* ifname, canid_t start, canid_t cnt, canid_t sh
  *  can1 - Other SocketCAN
  *
  ***********************************************/
-
-TEST(canIDConvertion, standardId)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf, cf2;
-
-    for(uint32_t i = 0; i < 2048; ++i)
-    {
-	    cf.can_id = i;
-
-        convert_can2usb_msg(&cf, &usb_msg);
-        convert_usb2can_msg(&usb_msg, &cf2);
-
-    	EXPECT_EQ(cf.can_id, cf2.can_id);
-    }
-}
-
-TEST(canIDConvertion, standardIdRTR)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf, cf2;
-
-    for(uint32_t i = 0; i < 2048; ++i)
-    {
-	    cf.can_id = i | CAN_RTR_FLAG;
-
-        convert_can2usb_msg(&cf, &usb_msg);
-        convert_usb2can_msg(&usb_msg, &cf2);
-
-    	EXPECT_EQ(cf.can_id, cf2.can_id);
-    }
-}
-
-TEST(canIDConvertion, extendedId)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf, cf2;
-
-    for(uint32_t i = 0; i < 0x20000000; ++i)
-    {
-	    cf.can_id = i | CAN_EFF_FLAG;
-
-        convert_can2usb_msg(&cf, &usb_msg);
-        convert_usb2can_msg(&usb_msg, &cf2);
-
-    	EXPECT_EQ(cf.can_id, cf2.can_id);
-    }
-}
-
-TEST(canIDConvertion, extendedIdRTR)
-{
-    uint32_t canIdConverted = 0;
-    mcba_usb_msg_can usb_msg;
-    struct can_frame cf, cf2;
-
-    for(uint32_t i = 0; i < 0x20000000; ++i)
-    {
-	    cf.can_id = i | CAN_EFF_FLAG | CAN_RTR_FLAG;
-
-        convert_can2usb_msg(&cf, &usb_msg);
-        convert_usb2can_msg(&usb_msg, &cf2);
-
-    	EXPECT_EQ(cf.can_id, cf2.can_id);
-    }
-}
 
 TEST(can_id_rcv, sid)
 {
@@ -940,14 +744,14 @@ TEST(dlc_snd, dlc)
 
     for(u8 i = 0; i <= 8; ++i)
     {
-        dataSent = writeCAN(canFdSnd, 0xff, i, 1, 2, 3, 4, 5, 6, 7, 8);
+	dataSent = writeCAN(canFdSnd, 0xff, i, 1, 2, 3, 4, 5, 6, 7, 8);
 
-        EXPECT_EQ(dataSent, CAN_MTU);
+	EXPECT_EQ(dataSent, CAN_MTU);
 
-        dataRcv = readCAN(canFdRcv, &frame);
+	dataRcv = readCAN(canFdRcv, &frame);
 
-        EXPECT_GE(dataRcv, CAN_MTU);
-        EXPECT_EQ(frame.can_dlc, i);
+	EXPECT_GE(dataRcv, CAN_MTU);
+	EXPECT_EQ(frame.can_dlc, i);
     }
 
     close(canFdSnd);
@@ -965,14 +769,14 @@ TEST(dlc_rcv, dlc)
 
     for(u8 i = 0; i <= 8; ++i)
     {
-        dataSent = writeCAN(canFdSnd, 0xff, i, 1, 2, 3, 4, 5, 6, 7, 8);
+	dataSent = writeCAN(canFdSnd, 0xff, i, 1, 2, 3, 4, 5, 6, 7, 8);
 
-        EXPECT_EQ(dataSent, CAN_MTU);
+	EXPECT_EQ(dataSent, CAN_MTU);
 
-        dataRcv = readCAN(canFdRcv, &frame);
+	dataRcv = readCAN(canFdRcv, &frame);
 
-        EXPECT_GE(dataRcv, CAN_MTU);
-        EXPECT_EQ(frame.can_dlc, i);
+	EXPECT_GE(dataRcv, CAN_MTU);
+	EXPECT_EQ(frame.can_dlc, i);
     }
 
     close(canFdSnd);
@@ -991,21 +795,21 @@ TEST(data_snd, data)
 
     for(u32 i = 0; i <= 255; ++i)
     {
-        dataSent = writeCAN(canFdSnd, 0xff, 8, data[0] + i, data[1] + i, data[2] + i, data[3] + i, data[4] + i, data[5] + i, data[6] + i, data[7] + i);
+	dataSent = writeCAN(canFdSnd, 0xff, 8, data[0] + i, data[1] + i, data[2] + i, data[3] + i, data[4] + i, data[5] + i, data[6] + i, data[7] + i);
 
-        EXPECT_EQ(dataSent, CAN_MTU);
+	EXPECT_EQ(dataSent, CAN_MTU);
 
-        dataRcv = readCAN(canFdRcv, &frame);
+	dataRcv = readCAN(canFdRcv, &frame);
 
-        EXPECT_GE(dataRcv, CAN_MTU);
-        EXPECT_EQ(frame.data[0], (u8)(data[0] + i));
-        EXPECT_EQ(frame.data[1], (u8)(data[1] + i));
-        EXPECT_EQ(frame.data[2], (u8)(data[2] + i));
-        EXPECT_EQ(frame.data[3], (u8)(data[3] + i));
-        EXPECT_EQ(frame.data[4], (u8)(data[4] + i));
-        EXPECT_EQ(frame.data[5], (u8)(data[5] + i));
-        EXPECT_EQ(frame.data[6], (u8)(data[6] + i));
-        EXPECT_EQ(frame.data[7], (u8)(data[7] + i));
+	EXPECT_GE(dataRcv, CAN_MTU);
+	EXPECT_EQ(frame.data[0], (u8)(data[0] + i));
+	EXPECT_EQ(frame.data[1], (u8)(data[1] + i));
+	EXPECT_EQ(frame.data[2], (u8)(data[2] + i));
+	EXPECT_EQ(frame.data[3], (u8)(data[3] + i));
+	EXPECT_EQ(frame.data[4], (u8)(data[4] + i));
+	EXPECT_EQ(frame.data[5], (u8)(data[5] + i));
+	EXPECT_EQ(frame.data[6], (u8)(data[6] + i));
+	EXPECT_EQ(frame.data[7], (u8)(data[7] + i));
     }
 
     close(canFdSnd);
@@ -1024,21 +828,21 @@ TEST(data_rcv, data)
 
     for(u32 i = 0; i <= 255; ++i)
     {
-        dataSent = writeCAN(canFdSnd, 0xff, 8, data[0] + i, data[1] + i, data[2] + i, data[3] + i, data[4] + i, data[5] + i, data[6] + i, data[7] + i);
+	dataSent = writeCAN(canFdSnd, 0xff, 8, data[0] + i, data[1] + i, data[2] + i, data[3] + i, data[4] + i, data[5] + i, data[6] + i, data[7] + i);
 
-        EXPECT_EQ(dataSent, CAN_MTU);
+	EXPECT_EQ(dataSent, CAN_MTU);
 
-        dataRcv = readCAN(canFdRcv, &frame);
+	dataRcv = readCAN(canFdRcv, &frame);
 
-        EXPECT_GE(dataRcv, CAN_MTU);
-        EXPECT_EQ(frame.data[0], (u8)(data[0] + i));
-        EXPECT_EQ(frame.data[1], (u8)(data[1] + i));
-        EXPECT_EQ(frame.data[2], (u8)(data[2] + i));
-        EXPECT_EQ(frame.data[3], (u8)(data[3] + i));
-        EXPECT_EQ(frame.data[4], (u8)(data[4] + i));
-        EXPECT_EQ(frame.data[5], (u8)(data[5] + i));
-        EXPECT_EQ(frame.data[6], (u8)(data[6] + i));
-        EXPECT_EQ(frame.data[7], (u8)(data[7] + i));
+	EXPECT_GE(dataRcv, CAN_MTU);
+	EXPECT_EQ(frame.data[0], (u8)(data[0] + i));
+	EXPECT_EQ(frame.data[1], (u8)(data[1] + i));
+	EXPECT_EQ(frame.data[2], (u8)(data[2] + i));
+	EXPECT_EQ(frame.data[3], (u8)(data[3] + i));
+	EXPECT_EQ(frame.data[4], (u8)(data[4] + i));
+	EXPECT_EQ(frame.data[5], (u8)(data[5] + i));
+	EXPECT_EQ(frame.data[6], (u8)(data[6] + i));
+	EXPECT_EQ(frame.data[7], (u8)(data[7] + i));
     }
 
     close(canFdSnd);
@@ -1048,20 +852,20 @@ TEST(data_rcv, data)
 TEST(Configuration, SpeedSettings)
 {
     const int bitrate[] = {20000, 33333, 50000, 80000, 83333, 100000,
-                             125000, 150000, 175000, 200000, 225000, 250000,
-                            275000, 300000, 500000, 625000, 800000, 1000000};
+			     125000, 150000, 175000, 200000, 225000, 250000,
+			    275000, 300000, 500000, 625000, 800000, 1000000};
 
     char buff[100];
 
 
     for(int i = 0; i < 18; ++i)
     {
-        configureCAN("can0", bitrate[i]);
+	configureCAN("can0", bitrate[i]);
 
-        sprintf(buff, "sudo ip -d link show can0 | grep %d > /dev/null", bitrate[i]);
-        EXPECT_EQ(0, system(buff));
+	sprintf(buff, "sudo ip -d link show can0 | grep %d > /dev/null", bitrate[i]);
+	EXPECT_EQ(0, system(buff));
 
-        sleep(1);
+	sleep(1);
     }
 
     EXPECT_EQ(0, system("sudo ip link set can0 down"));
@@ -1069,50 +873,29 @@ TEST(Configuration, SpeedSettings)
 
 TEST(Configuration, Termination)
 {
-    FILE *f = 0;
-    char initValue = -1;
-    char value = -1;
-    const char *termPath = "/sys/class/net/can0/termination";
     char buff[100];
 
-    sprintf(buff, "ls %s > /dev/null", termPath);
+    sprintf(buff, "sudo ~Proj/iproute2/ip/ip link set can0 type can termination 0");
+    EXPECT_EQ(0, system(buff));
+    sleep(1);
+
+    sprintf(buff, "sudo ~Proj/iproute2/ip/ip -d link show can0 | grep 'termination 0' > /dev/null");
+    EXPECT_EQ(0, system(buff));
+    
+    sprintf(buff, "sudo ~Proj/iproute2/ip/ip link set can0 type can termination 120");
+    EXPECT_EQ(0, system(buff));
+    sleep(1);
+
+    sprintf(buff, "sudo ~Proj/iproute2/ip/ip -d link show can0 | grep 'termination 120' > /dev/null");
     EXPECT_EQ(0, system(buff));
 
-    initValue = getTermination("can0");
+    sprintf(buff, "sudo ~Proj/iproute2/ip/ip link set can0 type can termination 0");
+    EXPECT_EQ(0, system(buff));
+    sleep(1);
 
-    setTermination("can0", '1');
-    value = -1;
-    value = getTermination("can0");
-    EXPECT_EQ('1', value);
-
-    setTermination("can0", '0');
-    value = -1;
-    value = getTermination("can0");
-    EXPECT_EQ('0', value);
-
-    setTermination("can0", '1');
-    value = -1;
-    value = getTermination("can0");
-    EXPECT_EQ('1', value);
-
-    for(u8 i = 0; i < '0'; ++i)
-    {
-        setTermination("can0", i);
-        value = -1;
-        value = getTermination("can0");
-        EXPECT_EQ('1', value);
-    }
-
-    for(u8 i = '2'; i > 0; ++i)
-    {
-        setTermination("can0", i);
-        value = -1;
-        value = getTermination("can0");
-        EXPECT_EQ('1', value);
-    }
-
-    setTermination("can0", initValue);
-    value = -1;
-    value = getTermination("can0");
-    EXPECT_EQ(initValue, value);
+    sprintf(buff, "sudo ~Proj/iproute2/ip/ip -d link show can0 | grep 'termination 0' > /dev/null");
+    EXPECT_EQ(0, system(buff));
+    
+    sprintf(buff, "sudo ip link set can0 up");
+    EXPECT_EQ(0, system(buff));
 }
