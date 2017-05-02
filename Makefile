@@ -1,14 +1,18 @@
 obj-m+=mcba_usb.o
- 
+
+KERNEL_SRC := /lib/modules/$(shell uname -r)/build/
+SRC := $(shell pwd)
+DEPMOD := depmod -a
+
 all:
-	make -C /lib/modules/$(shell uname -r)/build/ M=$(shell pwd) modules
+	$(MAKE) -C $(KERNEL_SRC) M=$(SRC) modules
 
 clean:
-	make -C /lib/modules/$(shell uname -r)/build/ M=$(shell pwd) clean
+	$(MAKE) -C $(KERNEL_SRC) M=$(SRC) clean
 
-install: all
-	cp mcba_usb.ko /lib/modules/$(shell uname -r)/kernel/drivers/net/can/usb
-	depmod -a
+modules_install: all
+	$(MAKE) -C $(KERNEL_SRC) M=$(SRC) modules_install
+	$(DEPMOD)	
 
 test:
 	g++ -lgtest_main -lgtest -lpthread ./tests/mcba_tests.cpp -o ./tests/mcba_tests
