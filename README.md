@@ -6,13 +6,15 @@ The CAN BUS Analyzer Tool is a simple to use low cost CAN bus monitor which can 
 
 Originally the tool is supported on Windows environment only. This project adds support for the tool to Linux Kernel (SocketCAN). 
 
+**NOTE: Driver is a part of Linux Kernel starting from [4.12](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/net/can/usb/mcba_usb.c?h=v4.12) version**
+
 ## Usage
 ### Building and installing
 ```
 git clone https://github.com/rkollataj/mcba_usb.git
 cd mcba_usb
 make
-sudo make install
+sudo make modules_install
 sudo modprobe mcba_usb
 ```
 ### Basic SocketCAN usage
